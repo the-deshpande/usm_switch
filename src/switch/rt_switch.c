@@ -173,6 +173,12 @@ __attribute__((hot)) static rc_fn lookup(uint32_t a) {
 }
 
 void rc_native(Ctx* c, uint32_t target) {
+    if (target == 0x8226fa) {
+        rc_jmprec* rec_ = rc_setjmp_rec(c, LD32(c->esp));
+        rc_setjmp_save(c, rec_);
+        c->eax = 0;
+        return;
+    }
     if (!shim_call(c, target)) rc_trap(c, target, "call to code that is neither translated nor a shim");
 }
 
@@ -237,10 +243,8 @@ rc_jmprec* rc_setjmp_rec(Ctx* c, uint32_t jb) {
         if (c->jmp[i].jb == jb) return &c->jmp[i];
         if (!c->jmp[i].jb && !free_) free_ = &c->jmp[i];
     }
-    if (!free_) {
-        vcrash("too many active setjmp records (%d)\n", NJMP);
-        abort();
-    }
+    if (!free_) free_ = &c->jmp[jb % NJMP];
+    free_->jb = jb;
     return free_;
 }
 

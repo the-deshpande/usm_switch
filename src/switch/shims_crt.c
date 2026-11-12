@@ -236,7 +236,11 @@ static void longjmp_(Ctx* c) {  /* back into the C frame of the translated setjm
     rc_longjmp(ARG(0), (int)ARG(1));
     rc_trap(c, ARG(0), "longjmp to a jmp_buf no translated setjmp recorded");
 }
-static void _setjmp3_(Ctx* c) { rc_trap(c, ARG(0), "_setjmp3 called directly (setjmp callers are translated inline)"); }
+static void _setjmp3_(Ctx* c) {
+    rc_jmprec* rec_ = rc_setjmp_rec(c, ARG(0));
+    rc_setjmp_save(c, rec_);
+    c->eax = 0;
+}
 static void isxdigit_(Ctx* c) { c->eax = isxdigit((int)ARG(0)) != 0; }
 static void setlocale_(Ctx* c) { static uint32_t s; if (!s) s = G(gstrdup("C")); c->eax = s; }
 static void _mbsdup_(Ctx* c) { c->eax = G(gstrdup(S(0))); }

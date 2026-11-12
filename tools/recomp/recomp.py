@@ -709,7 +709,8 @@ class Fn:
         if m == 'jecxz':
             return 'if (!ecx) { %s }' % self.jump(ops[0].imm)
         if m == 'call':
-            if (ops[0].type == X.X86_OP_MEM and not ops[0].mem.base and not ops[0].mem.index and self.imports.get(ops[0].mem.disp & 0xffffffff, ('', ''))[1] == 'setjmp3')                     or (ops[0].type == X.X86_OP_IMM and (ops[0].imm & 0xffffffff) in self.setjmp_thunks):
+            if (ops[0].type == X.X86_OP_MEM and not ops[0].mem.base and not ops[0].mem.index and self.imports.get(ops[0].mem.disp & 0xffffffff, ('', ''))[1] in ('setjmp3', '_setjmp3')) \
+                    or (ops[0].type == X.X86_OP_IMM and (ops[0].imm & 0xffffffff) in self.setjmp_thunks):
                 # setjmp in this function's own C frame, which longjmp (shimmed: rc_longjmp) returns to. Only the
                 # standalone build can route longjmp there, so the hook build leaves these functions original.
                 self.standalone_only = True
@@ -915,7 +916,7 @@ def main():
     funcs, imports = load_cfg()
     Fn.imports = imports
     # `jmp [setjmp3]` thunks: their callers count as setjmp callers too
-    slots = {a for a, (_, n) in imports.items() if n == 'setjmp3'}
+    slots = {a for a, (_, n) in imports.items() if n in ('setjmp3', '_setjmp3')}
     Fn.setjmp_thunks = set()
     for a in funcs:
         i = next(md.disasm(img.read(a, 6), a), None)
