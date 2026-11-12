@@ -136,6 +136,11 @@ static void init_(uint32_t bw, uint32_t bh) {
     if (!gladLoadGLLoader((GLADloadproc)eglGetProcAddress)) {
         gladLoadGL();
     }
+    static GLuint s_main_vao = 0;
+    if (!s_main_vao) {
+        glGenVertexArrays(1, &s_main_vao);
+    }
+    glBindVertexArray(s_main_vao);
     eglSwapInterval(s_display, 1);
     options_menu_init();
     vlog("gl: Nintendo Switch OpenGL initialized: GL %s, SL %s, Renderer %s\n",
@@ -489,9 +494,30 @@ static void upload_(Res* r, uint32_t level, const uint8_t* p) {  /* a level, cop
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, is4 ? GL_UNSIGNED_SHORT_4_4_4_4 : GL_UNSIGNED_SHORT_5_5_5_1, o);
             break;
         }
-        case 28: glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, w, h, 0, GL_ALPHA, GL_UNSIGNED_BYTE, p); break;
-        case 50: glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, w, h, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, p); break;
-        case 51: glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, w, h, 0, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, p); break;
+        case 28: {  /* A8: Alpha only -> RGBA */
+            uint8_t* o = scratch(n * 4);
+            for (uint32_t i = 0; i < n; i++) {
+                o[4 * i] = 255, o[4 * i + 1] = 255, o[4 * i + 2] = 255, o[4 * i + 3] = p[i];
+            }
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, o);
+            break;
+        }
+        case 50: {  /* L8: Luminance -> RGBA */
+            uint8_t* o = scratch(n * 4);
+            for (uint32_t i = 0; i < n; i++) {
+                o[4 * i] = p[i], o[4 * i + 1] = p[i], o[4 * i + 2] = p[i], o[4 * i + 3] = 255;
+            }
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, o);
+            break;
+        }
+        case 51: {  /* A8L8: Luminance + Alpha -> RGBA */
+            uint8_t* o = scratch(n * 4);
+            for (uint32_t i = 0; i < n; i++) {
+                o[4 * i] = p[2 * i], o[4 * i + 1] = p[2 * i], o[4 * i + 2] = p[2 * i], o[4 * i + 3] = p[2 * i + 1];
+            }
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, o);
+            break;
+        }
         default:
             vlog("gl: texture format %u not uploaded\n", f);
             r->uploaded = 0;
@@ -774,10 +800,10 @@ static Prog* program(const Key* k) {
     uint64_t t0 = now_us();  /* a program's first use stalls the render thread: logged */
     char* vs = k->vs ? cg_vertex(obj_copy(k->vs, NULL), k->swz, k->sizes) : cg_ffp_vertex(k->flags & 1, k->flags >> 1 & 1, k->swz, k->sizes);
     static const char* DBG_PS[] = {  /* VPC_DBG modes 1-4: magenta, vertex color, texture 0 alone, texcoord 0 as RG */
-        "", "gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);", "gl_FragColor = vec4(xD0.rgb, 1.0);",
-        "gl_FragColor = vec4(texture2D(s0, xT0.xy).rgb, 1.0);", "gl_FragColor = vec4(fract(xT0.xy), 0.0, 1.0);"};
+        "", "oFragColor = vec4(1.0, 0.0, 1.0, 1.0);", "oFragColor = vec4(xD0.rgb, 1.0);",
+        "oFragColor = vec4(texture(s0, xT0.xy).rgb, 1.0);", "oFragColor = vec4(fract(xT0.xy), 0.0, 1.0);"};
     char dbg_ps[512];
-    if (k->flags >> 3) snprintf(dbg_ps, sizeof dbg_ps, "precision highp float;\nvarying vec4 xD0;\nvarying vec4 xT0;\nuniform sampler2D s0;\n"
+    if (k->flags >> 3) snprintf(dbg_ps, sizeof dbg_ps, "#version 430 core\nprecision highp float;\nin vec4 xD0;\nin vec4 xT0;\nuniform sampler2D s0;\nout vec4 oFragColor;\n"
                                 "void main() { %s }\n", DBG_PS[k->flags >> 3 & 7]);
     char* ps = k->flags >> 3 ? strdup(dbg_ps)
              : k->ps ? cg_pixel(obj_copy(k->ps, NULL), k->afunc) : cg_ffp_pixel(&k->fp, k->afunc);
@@ -804,6 +830,13 @@ static Prog* program(const Key* k) {
             glBindAttribLocation(pr, i, n);
         }
         glLinkProgram(pr);
+        GLint ok = 0;
+        glGetProgramiv(pr, GL_LINK_STATUS, &ok);
+        if (!ok) {
+            char log[1024] = "";
+            glGetProgramInfoLog(pr, sizeof log, NULL, log);
+            vlog("gl: program link failed: %s\n", log);
+        }
         cache_save(pr, bin);
     }
     free(vs), free(ps);
@@ -945,10 +978,18 @@ typedef struct {
 
 uint64_t g_dt[5];  /* draw_'s sections, render thread (the report; every 8th draw, counted 8 times) */
 #define DT(i) do { if (t0) { uint64_t n_ = now_us(); g_dt[i] += 8 * (n_ - t0); t0 = n_; } } while (0)
-__attribute__((hot)) static void draw_(const DrawCmd* d) {
+static GLuint g_client_vbo = 0;
+static GLuint g_client_ibo = 0;
+
+__attribute__((hot)) static void draw_(const DrawCmd* d, uint32_t cmd_size) {
     GLenum mode;
     int count = count_of(d->prim, d->n, &mode);
     if (!count || !bind_target()) return;
+    if (d->client) {
+        if (!g_client_vbo) glGenBuffers(1, &g_client_vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, g_client_vbo);
+        glBufferData(GL_ARRAY_BUFFER, cmd_size, d, GL_STREAM_DRAW);
+    }
     static uint32_t dt_n;
     uint64_t t0 = ++dt_n & 7 || !log_on() ? 0 : now_us();
     if (g_gc_off) gc_reset();
@@ -978,20 +1019,21 @@ __attribute__((hot)) static void draw_(const DrawCmd* d) {
         uint32_t stride, sn = e[i].stream & 15, buf = 0;
         if (d->client) {
             if (!d->data[sn]) continue;
-            p = (const uint8_t*)d + d->data[sn], stride = d->stride[sn];
+            buf = g_client_vbo;
+            stride = d->stride[sn];
+            p = (const uint8_t*)(uintptr_t)(d->data[sn] + e[i].off);
         } else {
             Res* vb = st.vb[sn] ? res(st.vb[sn]) : NULL;
             if (!vb || !vb->gl) continue;
             buf = vb->gl;
-            stride = st.vbstride[sn], p = (const uint8_t*)(uintptr_t)(st.vboff[sn] + d->base * stride);
+            stride = st.vbstride[sn], p = (const uint8_t*)(uintptr_t)(st.vboff[sn] + d->base * stride + e[i].off);
         }
-        p += e[i].off;
         if (!(g_arrays >> loc & 1)) glEnableVertexAttribArray(loc);
         uint32_t* ga = g_gc[GC_ATTR + loc];
         /* a client array's vertices are new every draw */
         if (d->client || !ga[4] || ga[0] != buf || ga[1] != (uint32_t)(uintptr_t)p || ga[2] != stride || ga[3] != e[i].type) {
             GC(GC_VB, buf, 0, 0, 0, glBindBuffer(GL_ARRAY_BUFFER, buf));
-            glVertexAttribPointer(loc, TYPES[e[i].type].n, TYPES[e[i].type].gl, TYPES[e[i].type].norm, stride, p);
+            glVertexAttribPointer(loc, TYPES[e[i].type].n, TYPES[e[i].type].gl, TYPES[e[i].type].norm, stride, (const void*)p);
             ga[0] = buf, ga[1] = (uint32_t)(uintptr_t)p, ga[2] = stride, ga[3] = e[i].type, ga[4] = !d->client;
         }
         arrays |= 1u << loc;
@@ -1134,13 +1176,22 @@ __attribute__((hot)) static void draw_(const DrawCmd* d) {
     DT(4);
     uint64_t t = ++timed & 7 ? 0 : now_us();
     if (d->idx >= 0) {
-        const void* ip = (const void*)(uintptr_t)d->idx;
-        uint32_t ib = d->client ? 0 : res(st.ib)->gl;
-        if (d->client) ip = (const uint8_t*)d + d->idx;
-        GC(GC_IB, ib, 0, 0, 0, glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ib));
-        glDrawElements(mode, count, d->idx32 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT, ip);
+        if (d->client) {
+            if (!g_client_ibo) glGenBuffers(1, &g_client_ibo);
+            uint32_t isz = d->idx32 ? 4 : 2;
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_client_ibo);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, count * isz, (const uint8_t*)d + d->idx, GL_STREAM_DRAW);
+            glDrawElements(mode, count, d->idx32 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT, (const void*)0);
+            g_gc[GC_IB][4] = 0;
+        } else {
+            const void* ip = (const void*)(uintptr_t)d->idx;
+            uint32_t ib = res(st.ib)->gl;
+            GC(GC_IB, ib, 0, 0, 0, glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ib));
+            glDrawElements(mode, count, d->idx32 ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT, ip);
+        }
     } else
         glDrawArrays(mode, 0, count);
+    if (d->client) g_gc[GC_VB][4] = 0;
     if (t) g_glcall_us += 8 * (now_us() - t);
 }
 
@@ -1223,7 +1274,7 @@ __attribute__((hot)) static void run(Arena* a) {
             buffer_(cb->b, cb->target, (const uint8_t*)(cb + 1));
             break;
         }
-        case C_DRAW: draw_((const DrawCmd*)q); break;
+        case C_DRAW: draw_((const DrawCmd*)q, h->size); break;
         case C_FREE: free_(*(Res**)q); break;
         case C_PRESENT: present_(); break;
         }

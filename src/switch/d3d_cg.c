@@ -279,8 +279,12 @@ static void prologue(Sb* b, uint32_t inputs, uint32_t swz, uint32_t sizes) {
 /* The source is written in CG spelling, then glsl() respells it: vitaGL's GLSL translator rejects CG */
 static char* glsl(char* s) {
     static const char* const map[][2] = {
-        {"float4", "vec4"}, {"float3", "vec3"}, {"float2", "vec2"}, {"lerp(", "mix("}, {"frac(", "fract("},
-        {"rsqrt(", "inversesqrt("}, {"tex2D(", "texture2D("}, {"lit(", "lit_("}};
+        {"float4", "vec4"}, {"float3", "vec3"}, {"float2", "vec2"},
+        {"lerp(", "mix("}, {"frac(", "fract("},
+        {"rsqrt(", "inversesqrt("},
+        {"tex2D(", "texture("}, {"texture2D(", "texture("},
+        {"gl_FragColor", "oFragColor"},
+        {"lit(", "lit_("}};
     for (size_t k = 0; s && k < sizeof map / sizeof *map; k++) {
         size_t la = strlen(map[k][0]), lb = strlen(map[k][1]);
         Sb o = {0};
@@ -297,27 +301,42 @@ static char* glsl(char* s) {
 }
 #define SATURATE_MACRO "#define saturate(x) clamp(x, 0.0, 1.0)\n"
 static const char* LIT_HELPER =
-    "float4 lit_(float n, float h, float m) {\n"
-    "  return float4(1.0, max(n, 0.0), n > 0.0 && h > 0.0 ? pow(h, m) : 0.0, 1.0);\n}\n";
-static const char* VARYINGS = "varying float4 xD0;\nvarying float4 xD1;\nvarying float4 xT0;\nvarying float4 xT1;\n"
-                              "varying float4 xT2;\nvarying float4 xT3;\nvarying float4 xF;\n";
+    "vec4 lit_(float n, float h, float m) {\n"
+    "  return vec4(1.0, max(n, 0.0), n > 0.0 && h > 0.0 ? pow(h, m) : 0.0, 1.0);\n}\n";
+static const char* VS_VARYINGS =
+    "out vec4 xD0;\n"
+    "out vec4 xD1;\n"
+    "out vec4 xT0;\n"
+    "out vec4 xT1;\n"
+    "out vec4 xT2;\n"
+    "out vec4 xT3;\n"
+    "out vec4 xF;\n";
+static const char* FS_VARYINGS =
+    "in vec4 xD0;\n"
+    "in vec4 xD1;\n"
+    "in vec4 xT0;\n"
+    "in vec4 xT1;\n"
+    "in vec4 xT2;\n"
+    "in vec4 xT3;\n"
+    "in vec4 xF;\n";
 /* attributes are read-only in GLSL: i<n> is copied to the register v<n> */
 static void vs_head(Sb* h, uint32_t inputs, const char* uniforms) {
+    sb(h, "#version 430 core\n");
     for (int i = 0; i < 16; i++)
-        if (inputs >> i & 1) sb(h, "attribute float4 i%d;\n", i);
+        if (inputs >> i & 1) sb(h, "layout(location = %d) in vec4 i%d;\n", i, i);
     sb(h, "%s%s%s%s"
-          "uniform float4 u_flip;\n"
+          "uniform vec4 u_flip;\n"
           "void main() {\n"
           "  int _ai = 0;\n"
-          "  float4 oPos = float4(0, 0, 0, 1), oD0 = float4(1, 1, 1, 1), oD1 = float4(0, 0, 0, 0);\n"
-          "  float4 oT0 = float4(0, 0, 0, 1), oT1 = oT0, oT2 = oT0, oT3 = oT0;\n",
-       SATURATE_MACRO, uniforms, VARYINGS, LIT_HELPER);
+          "  vec4 oPos = vec4(0, 0, 0, 1), oD0 = vec4(1, 1, 1, 1), oD1 = vec4(0, 0, 0, 0);\n"
+          "  vec4 oT0 = vec4(0, 0, 0, 1), oT1 = oT0, oT2 = oT0, oT3 = oT0;\n",
+       SATURATE_MACRO, uniforms, VS_VARYINGS, LIT_HELPER);
     for (int i = 0; i < 16; i++)
-        if (inputs >> i & 1) sb(h, "  float4 v%d = i%d;\n", i, i);
+        if (inputs >> i & 1) sb(h, "  vec4 v%d = i%d;\n", i, i);
 }
 /* D3D clip depth 0..w to GL -w..w; u_fix.xy moves D3D's pixel centers onto GL's */
 /* u_flip.x = -1 when drawing into a texture: GL fills it bottom row first, D3D reads it top row first */
-static const char* VS_END = "  xF = float4(oPos.w, 0, 0, 0);\n  oPos.z = oPos.z * 2.0 - oPos.w;\n  oPos.xy += u_fix.xy * oPos.w;\n  oPos.y *= u_flip.x;\n"
+static const char* VS_END = "  xF = vec4(oPos.w, 0.0, 0.0, 0.0);\n  oPos.z = oPos.z * 2.0 - oPos.w;\n  oPos.xy += u_fix.xy * oPos.w;\n  oPos.y *= u_flip.x;\n"
                             "  gl_Position = oPos;\n  xD0 = oD0; xD1 = oD1; xT0 = oT0; xT1 = oT1; xT2 = oT2; xT3 = oT3;\n}\n";
 
 char* cg_vertex(const uint32_t* tok, uint32_t swz, uint32_t sizes) {
@@ -325,7 +344,7 @@ char* cg_vertex(const uint32_t* tok, uint32_t swz, uint32_t sizes) {
     uint32_t inputs = cg_inputs(tok, u, ix);
     Tr t = {0};
     Sb body = {0}, h = {0};
-    sb(&body, "  float4 r0 = float4(0, 0, 0, 0), r1 = r0, r2 = r0, r3 = r0, r4 = r0, r5 = r0, r6 = r0, r7 = r0, r8 = r0,"
+    sb(&body, "  vec4 r0 = vec4(0, 0, 0, 0), r1 = r0, r2 = r0, r3 = r0, r4 = r0, r5 = r0, r6 = r0, r7 = r0, r8 = r0,"
               " r9 = r0, r10 = r0, r11 = r0, q_ = r0, oFogx = r0, oPtsx = r0, oTx = r0, a0 = r0;\n");
     prologue(&body, inputs, swz, sizes);
     if (!translate(tok, &t, &body)) { free(body.p); return NULL; }
@@ -334,10 +353,10 @@ char* cg_vertex(const uint32_t* tok, uint32_t swz, uint32_t sizes) {
        one uniform vc_N each (gl.c finds them by name), or the vc[96] array when it indexes with a0 (skinning) */
     Sb uni = {0};
     if (t.rel) {
-        sb(&uni, "uniform float4 vc[96];\n");
+        sb(&uni, "uniform vec4 vc[96];\n");
     } else {
         for (uint32_t r = 0; r < 96; r++)
-            if (t.vcused[r >> 5] >> (r & 31) & 1) sb(&uni, "uniform float4 vc_%u;\n", r);
+            if (t.vcused[r >> 5] >> (r & 31) & 1) sb(&uni, "uniform vec4 vc_%u;\n", r);
         char* o = body.p;  /* vc[N] -> vc_N, in place (never longer) */
         for (const char* q = body.p; *q;) {
             if (q[0] == 'v' && q[1] == 'c' && q[2] == '[' && q[3] >= '0' && q[3] <= '9') {
@@ -350,7 +369,7 @@ char* cg_vertex(const uint32_t* tok, uint32_t swz, uint32_t sizes) {
         }
         *o = 0, body.n = (size_t)(o - body.p);
     }
-    sb(&uni, "uniform float4 u_fix;\n");
+    sb(&uni, "uniform vec4 u_fix;\n");
     vs_head(&h, inputs, uni.p);
     free(uni.p);
     return glsl(sb_join(&h, &body));
@@ -362,27 +381,29 @@ static void alpha_test(Sb* b, uint32_t f) {
     else if (f < 9 && ops[f]) sb(b, "  if (!(floor(oCol.a * 255.0 + 0.5) %s u_aref.x)) discard;\n", ops[f]);
 }
 static void ps_head(Sb* h, uint32_t samplers, const char* uniforms) {
-    sb(h, "precision highp float;\n%s", VARYINGS);
+    sb(h, "#version 430 core\n"
+          "precision highp float;\n"
+          "out vec4 oFragColor;\n%s", FS_VARYINGS);
     for (int i = 0; i < 4; i++)
         if (samplers >> i & 1) sb(h, "uniform sampler2D s%d;\n", i);
-    sb(h, "%s%suniform float4 u_aref;\nuniform float4 u_fog;\nuniform float4 u_fogc;\nvoid main() {\n"
-          "  float4 vD0 = xD0, vD1 = xD1, vT0 = xT0, vT1 = xT1, vT2 = xT2, vT3 = xT3, oCol;\n",
+    sb(h, "%s%suniform vec4 u_aref;\nuniform vec4 u_fog;\nuniform vec4 u_fogc;\nvoid main() {\n"
+          "  vec4 vD0 = xD0, vD1 = xD1, vT0 = xT0, vT1 = xT1, vT2 = xT2, vT3 = xT3, oCol;\n",
        SATURATE_MACRO, uniforms);
 }
 /* distance fog (u_fog: start, 1 / (end - start), on), by view depth: hides where far geometry stops being drawn */
 static const char* PS_END = "  oCol.rgb = mix(oCol.rgb, u_fogc.rgb, saturate((xF.x - u_fog.x) * u_fog.y) * u_fog.z);\n"
-                            "  gl_FragColor = oCol;\n}\n";
+                            "  oFragColor = oCol;\n}\n";
 
 char* cg_pixel(const uint32_t* tok, uint32_t afunc) {
     Tr t = {.ps = 1};
     Sb body = {0}, h = {0};
-    sb(&body, "  float4 r0 = float4(0, 0, 0, 0), r1 = r0, t0 = r0, t1 = r0, t2 = r0, t3 = r0, q_ = r0;\n"
-              "  float4 v0 = saturate(vD0), v1 = saturate(vD1);\n");
+    sb(&body, "  vec4 r0 = vec4(0, 0, 0, 0), r1 = r0, t0 = r0, t1 = r0, t2 = r0, t3 = r0, q_ = r0;\n"
+              "  vec4 v0 = saturate(vD0), v1 = saturate(vD1);\n");
     if (!translate(tok, &t, &body)) { free(body.p); return NULL; }
     sb(&body, "  oCol = saturate(r0);\n");
     alpha_test(&body, afunc);
     sb(&body, "%s", PS_END);
-    ps_head(&h, t.used, "uniform float4 pc[8];\n");
+    ps_head(&h, t.used, "uniform vec4 pc[8];\n");
     return glsl(sb_join(&h, &body));
 }
 

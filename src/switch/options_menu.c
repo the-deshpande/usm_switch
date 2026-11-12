@@ -192,6 +192,7 @@ typedef struct {
 
 static GLuint s_prog = 0;
 static GLuint s_vbo = 0;
+static GLuint s_vao = 0;
 static GLuint s_font_tex = 0;
 static GLint s_u_res = -1;
 static GLint s_u_tex = -1;
@@ -210,7 +211,7 @@ static GLuint compile_shader(GLenum type, const char* src) {
     if (!ok) {
         char buf[512];
         glGetShaderInfoLog(s, sizeof buf, NULL, buf);
-        vlog("options_menu: shader compile failed: %s\n", buf);
+        vlog("options_menu: shader compile failed: %s\n%s\n", buf, src);
         glDeleteShader(s);
         return 0;
     }
@@ -249,12 +250,13 @@ static void init_gui_gl(void) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     static const char* vs =
-        "attribute vec2 a_pos;\n"
-        "attribute vec2 a_uv;\n"
-        "attribute vec4 a_col;\n"
+        "#version 430 core\n"
+        "layout(location = 0) in vec2 a_pos;\n"
+        "layout(location = 1) in vec2 a_uv;\n"
+        "layout(location = 2) in vec4 a_col;\n"
         "uniform vec2 u_res;\n"
-        "varying vec2 v_uv;\n"
-        "varying vec4 v_col;\n"
+        "out vec2 v_uv;\n"
+        "out vec4 v_col;\n"
         "void main() {\n"
         "    v_uv = a_uv;\n"
         "    v_col = a_col;\n"
@@ -262,16 +264,18 @@ static void init_gui_gl(void) {
         "}\n";
 
     static const char* fs =
+        "#version 430 core\n"
         "precision mediump float;\n"
         "uniform sampler2D u_tex;\n"
         "uniform int u_mode;\n"
-        "varying vec2 v_uv;\n"
-        "varying vec4 v_col;\n"
+        "in vec2 v_uv;\n"
+        "in vec4 v_col;\n"
+        "out vec4 fragColor;\n"
         "void main() {\n"
         "    if (u_mode == 1) {\n"
-        "        gl_FragColor = texture2D(u_tex, v_uv) * v_col;\n"
+        "        fragColor = texture(u_tex, v_uv) * v_col;\n"
         "    } else {\n"
-        "        gl_FragColor = v_col;\n"
+        "        fragColor = v_col;\n"
         "    }\n"
         "}\n";
 
@@ -284,6 +288,13 @@ static void init_gui_gl(void) {
     glBindAttribLocation(s_prog, 1, "a_uv");
     glBindAttribLocation(s_prog, 2, "a_col");
     glLinkProgram(s_prog);
+    GLint linked = 0;
+    glGetProgramiv(s_prog, GL_LINK_STATUS, &linked);
+    if (!linked) {
+        char buf[512];
+        glGetProgramInfoLog(s_prog, sizeof buf, NULL, buf);
+        vlog("options_menu: program link failed: %s\n", buf);
+    }
     glDeleteShader(v);
     glDeleteShader(f);
 
@@ -291,7 +302,17 @@ static void init_gui_gl(void) {
     s_u_tex = glGetUniformLocation(s_prog, "u_tex");
     s_u_mode = glGetUniformLocation(s_prog, "u_mode");
 
+    glGenVertexArrays(1, &s_vao);
+    glBindVertexArray(s_vao);
     glGenBuffers(1, &s_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(MenuVert), (void*)offsetof(MenuVert, x));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(MenuVert), (void*)offsetof(MenuVert, u));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(MenuVert), (void*)offsetof(MenuVert, r));
+    glBindVertexArray(0);
 }
 
 static void flush_verts(int mode) {
@@ -336,6 +357,18 @@ static float draw_text(float x, float y, float scale, const char* str, float r, 
     return cur_x - x;
 }
 
+static void restore_gl_state(GLint prev_vao, GLint prev_prog, GLint prev_vbo, const GLint* prev_vp,
+                             GLboolean prev_blend, GLboolean prev_depth, GLboolean prev_cull, GLboolean prev_scissor) {
+    if (prev_blend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    if (prev_depth) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    if (prev_cull) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+    if (prev_scissor) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
+    glViewport(prev_vp[0], prev_vp[1], prev_vp[2], prev_vp[3]);
+    glUseProgram(prev_prog);
+    glBindBuffer(GL_ARRAY_BUFFER, prev_vbo);
+    glBindVertexArray(prev_vao);
+}
+
 void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     /* If FPS counter enabled, calculate and draw it even when menu is closed */
     static uint64_t last_time = 0;
@@ -353,8 +386,21 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
 
     init_gui_gl();
 
+    GLint prev_vao = 0, prev_prog = 0, prev_vbo = 0, prev_vp[4];
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prev_vao);
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prev_prog);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prev_vbo);
+    glGetIntegerv(GL_VIEWPORT, prev_vp);
+    GLboolean prev_blend = glIsEnabled(GL_BLEND);
+    GLboolean prev_depth = glIsEnabled(GL_DEPTH_TEST);
+    GLboolean prev_cull = glIsEnabled(GL_CULL_FACE);
+    GLboolean prev_scissor = glIsEnabled(GL_SCISSOR_TEST);
+
+    glBindVertexArray(s_vao);
+    glViewport(0, 0, screen_w, screen_h);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
+    glDisable(GL_SCISSOR_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -364,14 +410,6 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     glBindTexture(GL_TEXTURE_2D, s_font_tex);
     glUniform1i(s_u_tex, 0);
 
-    glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(MenuVert), (void*)offsetof(MenuVert, x));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(MenuVert), (void*)offsetof(MenuVert, u));
-    glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(MenuVert), (void*)offsetof(MenuVert, r));
-
     /* FPS Counter overlay if enabled */
     if (options_show_fps() && !g_open) {
         char fps_str[32];
@@ -380,18 +418,12 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
         flush_verts(0);
         draw_text(screen_w - 132.0f, 20.0f, 0.75f, fps_str, 0.3f, 1.0f, 0.4f, 1.0f);
         flush_verts(1);
-        glDisableVertexAttribArray(0);
-        glDisableVertexAttribArray(1);
-        glDisableVertexAttribArray(2);
-        glEnable(GL_DEPTH_TEST);
+        restore_gl_state(prev_vao, prev_prog, prev_vbo, prev_vp, prev_blend, prev_depth, prev_cull, prev_scissor);
         return;
     }
 
     if (!g_open) {
-        glDisableVertexAttribArray(0);
-        glDisableVertexAttribArray(1);
-        glDisableVertexAttribArray(2);
-        glEnable(GL_DEPTH_TEST);
+        restore_gl_state(prev_vao, prev_prog, prev_vbo, prev_vp, prev_blend, prev_depth, prev_cull, prev_scissor);
         return;
     }
 
@@ -453,8 +485,5 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
 
     flush_verts(1);
 
-    glDisableVertexAttribArray(0);
-    glDisableVertexAttribArray(1);
-    glDisableVertexAttribArray(2);
-    glEnable(GL_DEPTH_TEST);
+    restore_gl_state(prev_vao, prev_prog, prev_vbo, prev_vp, prev_blend, prev_depth, prev_cull, prev_scissor);
 }
