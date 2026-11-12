@@ -11,8 +11,33 @@
 
 extern PadState pad;
 
-/* Scan codes */
-enum { K_ESC = 1, K_M = 50, K_UP = 200, K_LEFT = 203, K_RIGHT = 205, K_DOWN = 208 };
+/* DIK Scan codes */
+enum {
+    K_ESC    = 1,
+    K_1      = 2,
+    K_BACK   = 14,
+    K_TAB    = 15,
+    K_Q      = 16,
+    K_W      = 17,
+    K_E      = 18,
+    K_R      = 19,
+    K_RETURN = 28,
+    K_LCTRL  = 29,
+    K_A      = 30,
+    K_S      = 31,
+    K_D      = 32,
+    K_F      = 33,
+    K_LSHIFT = 42,
+    K_C      = 46,
+    K_M      = 50,
+    K_RSHIFT = 54,
+    K_SPACE  = 57,
+    K_UP     = 200,
+    K_LEFT   = 203,
+    K_RIGHT  = 205,
+    K_DOWN   = 208
+};
+
 enum { DEV_KEYBOARD = 1, DEV_MOUSE = 2, DEV_PAD = 3 };
 #define PAD_GUID 0x53574954u  /* "SWIT": Switch gamepad instance GUID */
 
@@ -33,9 +58,7 @@ static void poll(void) {
 
     if (kDown & HidNpadButton_Minus) {
         options_menu_toggle();
-    }
-
-    if (options_menu_is_open()) {
+    } else if (options_menu_is_open()) {
         options_menu_update(kDown, g_buttons, g_lstick.x, g_lstick.y);
         g_buttons = 0;
         g_lstick.x = g_lstick.y = 0;
@@ -47,14 +70,37 @@ static void poll(void) {
 
     memset(g_keys, 0, sizeof g_keys);
 #define KEY(k, on) do { if (on) g_keys[k] = 0x80; } while (0)
-    KEY(K_UP, g_buttons & (HidNpadButton_Up | HidNpadButton_StickLUp));
-    KEY(K_DOWN, g_buttons & (HidNpadButton_Down | HidNpadButton_StickLDown));
-    KEY(K_LEFT, g_buttons & (HidNpadButton_Left | HidNpadButton_StickLLeft));
-    KEY(K_RIGHT, g_buttons & (HidNpadButton_Right | HidNpadButton_StickLRight));
-    KEY(K_ESC, g_buttons & HidNpadButton_Plus);   /* Pause */
-    KEY(K_M, g_buttons & HidNpadButton_Minus);    /* Map / Menu */
+    /* D-pad & Left Stick navigation for menus and keyboard movement */
+    int up = (g_buttons & (HidNpadButton_Up | HidNpadButton_StickLUp)) || (g_lstick.y > 16000);
+    int dn = (g_buttons & (HidNpadButton_Down | HidNpadButton_StickLDown)) || (g_lstick.y < -16000);
+    int lf = (g_buttons & (HidNpadButton_Left | HidNpadButton_StickLLeft)) || (g_lstick.x < -16000);
+    int rt = (g_buttons & (HidNpadButton_Right | HidNpadButton_StickLRight)) || (g_lstick.x > 16000);
+
+    KEY(K_UP, up);
+    KEY(K_DOWN, dn);
+    KEY(K_LEFT, lf);
+    KEY(K_RIGHT, rt);
+
+    KEY(K_W, up);
+    KEY(K_S, dn);
+    KEY(K_A, lf);
+    KEY(K_D, rt);
+
+    /* Menu confirmation / selection / pause / map */
+    KEY(K_RETURN, g_buttons & (HidNpadButton_A | HidNpadButton_B));
+    KEY(K_SPACE,  g_buttons & (HidNpadButton_B | HidNpadButton_A));
+    KEY(K_ESC,    g_buttons & HidNpadButton_Plus);
+    KEY(K_BACK,   g_buttons & HidNpadButton_B);
+    KEY(K_M,      g_buttons & (HidNpadButton_StickL | HidNpadButton_Minus));
+
+    /* Actions on keyboard */
+    KEY(K_Q, g_buttons & HidNpadButton_Y);  /* Punch */
+    KEY(K_E, g_buttons & HidNpadButton_X);  /* Kick */
+    KEY(K_LSHIFT, g_buttons & (HidNpadButton_L | HidNpadButton_ZL));  /* Zip */
+    KEY(K_RSHIFT, g_buttons & (HidNpadButton_R | HidNpadButton_ZR));  /* Web */
 #undef KEY
 
+    /* Mouse buttons for QTEs */
     g_mouse[0] = (g_buttons & (HidNpadButton_L | HidNpadButton_ZL)) ? 0x80 : 0;
     g_mouse[1] = (g_buttons & (HidNpadButton_R | HidNpadButton_ZR)) ? 0x80 : 0;
 }
@@ -62,28 +108,47 @@ static void poll(void) {
 static int dev_kind(Ctx* c) { return (int)LD32(ARG(0) + 8); }
 
 static int32_t axis(int v, int i) {
-    /* v: -32768..32767 -> range 0..65535 */
+    /* v: -32768..32767
+       Deadzone: +/- 3500 */
     if (v > -3500 && v < 3500) v = 0;
     double t = (v + 32768.0) / 65535.0;
+    if (t < 0.0) t = 0.0;
+    if (t > 1.0) t = 1.0;
     return g_min[i] + (int32_t)((g_max[i] - g_min[i]) * t + 0.5);
 }
 
 static void pad_state(uint32_t out, uint32_t cb) {
     poll();
+
+    int rx = g_rstick.x;
+    int ry = g_rstick.y;
+    if (options_get_cam_invert_x()) rx = -rx;
+    if (options_get_cam_invert_y()) ry = -ry;
+
+    /* Stick sensitivity */
+    float sens = options_get_sensitivity();
+    if (sens != 1.0f) {
+        rx = (int)(rx * sens);
+        if (rx > 32767) rx = 32767; else if (rx < -32768) rx = -32768;
+        ry = (int)(ry * sens);
+        if (ry > 32767) ry = 32767; else if (ry < -32768) ry = -32768;
+    }
+
     int32_t a[6] = {
         axis(g_lstick.x, 0),
         axis(-g_lstick.y, 1),
-        axis(g_rstick.x, 2),
+        axis(rx, 2),
         axis(0, 3),
         axis(0, 4),
-        axis(-g_rstick.y, 5)
+        axis(-ry, 5)
     };
     for (int i = 0; i < 6 && 4u * i + 4 <= cb; i++) ST32(out + 4 * i, (uint32_t)a[i]);
 
-    int up = (g_buttons & HidNpadButton_Up) != 0;
-    int dn = (g_buttons & HidNpadButton_Down) != 0;
-    int lf = (g_buttons & HidNpadButton_Left) != 0;
-    int rt = (g_buttons & HidNpadButton_Right) != 0;
+    /* POV Hat (D-pad & Left Stick) */
+    int up = (g_buttons & (HidNpadButton_Up | HidNpadButton_StickLUp)) || (g_lstick.y > 16000);
+    int dn = (g_buttons & (HidNpadButton_Down | HidNpadButton_StickLDown)) || (g_lstick.y < -16000);
+    int lf = (g_buttons & (HidNpadButton_Left | HidNpadButton_StickLLeft)) || (g_lstick.x < -16000);
+    int rt = (g_buttons & (HidNpadButton_Right | HidNpadButton_StickLRight)) || (g_lstick.x > 16000);
     uint32_t pov = up ? (rt ? 4500 : lf ? 31500 : 0) :
                    dn ? (rt ? 13500 : lf ? 22500 : 18000) :
                    rt ? 9000 : lf ? 27000 : 0xffffffffu;
@@ -94,20 +159,23 @@ static void pad_state(uint32_t out, uint32_t cb) {
         ST32(out + 44, 0xffffffffu);
     }
 
-    /* Button mapping:
-       0: Jump (B on Switch / Cross on PS)
-       1: StickToWalls (A on Switch / Circle on PS)
-       2: Punch (Y on Switch / Square on PS)
-       3: Kick (X on Switch / Triangle on PS)
-       4: Web Zip (L / ZL)
-       5: Web Swing (R / ZR)
+    /* Button mapping (matching table at 0x88da80 & shims_misc.c):
+       0: Jump (Cross / Switch B)
+       1: StickToWalls (Circle / Switch A)
+       2: Punch (Square / Switch Y)
+       3: Kick (Triangle / Switch X)
+       4: Web Zip (BlackButton3 / L | ZL)
+       5: Web Swing (ThrowWeb3 / R | ZR)
        6: Select / Map (Minus)
        7: Start / Pause (Plus)
        8: Camera Center (StickR click)
     */
-    static const u64 map[] = {
-        HidNpadButton_B,
-        HidNpadButton_A,
+    u64 btn_jump = options_get_swap_ab() ? HidNpadButton_A : HidNpadButton_B;
+    u64 btn_act  = options_get_swap_ab() ? HidNpadButton_B : HidNpadButton_A;
+
+    const u64 map[] = {
+        btn_jump,
+        btn_act,
         HidNpadButton_Y,
         HidNpadButton_X,
         HidNpadButton_L | HidNpadButton_ZL,
@@ -131,74 +199,99 @@ static void dev_GetDeviceState(Ctx* c) {
 }
 
 static void dev_GetDeviceData(Ctx* c) {
-    uint32_t cb = ARG(1), out = ARG(2), pdw = ARG(3), flags = ARG(4);
-    uint32_t nmax = pdw ? LD32(pdw) : 0, n = 0;
+    uint32_t sz = ARG(1), out = ARG(2), pn = ARG(3), flags = ARG(4);
+    uint32_t max = pn ? LD32(pn) : 0, n = 0;
+    int peek = (flags & 1) != 0;
+
     if (dev_kind(c) == DEV_KEYBOARD) {
         poll();
-        for (int k = 0; k < 256 && n < nmax; k++) {
-            if (g_keys[k] != g_prev[k]) {
-                if (out) {
-                    uint32_t p = out + n * cb;
-                    ST32(p, (uint32_t)k);
-                    ST32(p + 4, g_keys[k]);
-                    ST32(p + 8, (uint32_t)(armGetSystemTick() / 19200u));
-                    ST32(p + 12, ++g_seq);
-                }
-                n++;
+        for (int k = 0; k < 256; k++) {
+            if (g_keys[k] == g_prev[k]) continue;
+            if (out && n < max) {
+                uint32_t o = out + n * sz;
+                memset(H(o), 0, sz);
+                ST32(o, (uint32_t)k);
+                ST32(o + 4, g_keys[k]);
+                ST32(o + 12, ++g_seq);
             }
+            if (!peek && (n < max || !out)) g_prev[k] = g_keys[k];
+            n++;
         }
-        if (!(flags & 1)) memcpy(g_prev, g_keys, sizeof g_prev);
     } else if (dev_kind(c) == DEV_MOUSE) {
         poll();
-        for (int b = 0; b < 2 && n < nmax; b++) {
-            if (g_mouse[b] != g_mprev[b]) {
-                if (out) {
-                    uint32_t p = out + n * cb;
-                    ST32(p, 12u + b);
-                    ST32(p + 4, g_mouse[b]);
-                    ST32(p + 8, (uint32_t)(armGetSystemTick() / 19200u));
-                    ST32(p + 12, ++g_seq);
-                }
-                n++;
+        for (int k = 0; k < 2; k++) {
+            if (g_mouse[k] == g_mprev[k]) continue;
+            if (out && n < max) {
+                uint32_t o = out + n * sz;
+                memset(H(o), 0, sz);
+                ST32(o, 12u + k);
+                ST32(o + 4, g_mouse[k]);
+                ST32(o + 12, ++g_seq);
             }
+            if (!peek && (n < max || !out)) g_mprev[k] = g_mouse[k];
+            n++;
         }
-        if (!(flags & 1)) memcpy(g_mprev, g_mouse, sizeof g_mprev);
     }
-    if (pdw) ST32(pdw, n);
+    if (pn) ST32(pn, out ? (n < max ? n : max) : n);
     c->eax = 0;
 }
 
+/* DIPROP_RANGE (4): DIPROPRANGE {size, headersize, obj, how, min, max} */
 static void dev_SetProperty(Ctx* c) {
     uint32_t prop = ARG(1), p = ARG(2);
     if (prop == 4 && p) {
-        uint32_t obj = LD32(p + 8), how = LD32(p + 12), i = how == 1 ? obj / 4 : how == 2 ? (obj >> 8) & 0xff : 0;
-        if (i < 8) {
+        uint32_t obj = LD32(p + 8), how = LD32(p + 12);
+        int lo = 0, hi = 7;
+        if (how == 1) lo = hi = (int)(obj / 4);
+        else if (how == 2) lo = hi = (int)((obj >> 8) & 0xff);
+        for (int i = lo; i <= hi && i < 8; i++) {
             g_min[i] = (int32_t)LD32(p + 16);
             g_max[i] = (int32_t)LD32(p + 20);
         }
+        vlog("SetProperty DIPROP_RANGE: how=%u obj=%u [%d..%d] min=%d max=%d\n",
+             how, obj, lo, hi, (int32_t)LD32(p + 16), (int32_t)LD32(p + 20));
     }
     c->eax = 0;
 }
 
+/* Enumerates the pad's axes: DIDEVICEOBJECTINSTANCEA */
 static void dev_EnumObjects(Ctx* c) {
-    uint32_t cb = ARG(1), ref = ARG(2);
-    static uint8_t* d;
-    if (!d) d = guest_alloc(64);
+    if (dev_kind(c) != DEV_PAD) { c->eax = 0; return; }
+    static const uint32_t guid1[] = {0xa36d02e0u, 0xa36d02e1u, 0xa36d02e2u, 0, 0, 0xa36d02e3u};
+    static const char* names[] = {"X Axis", "Y Axis", "Z Axis", "", "", "Z Rotation"};
+    static uint32_t o;
+    if (!o) o = G(guest_alloc(316));
+    uint32_t cb = ARG(1), ref = ARG(2), flags = ARG(3);
+    static const uint8_t tail[8] = {0xbf, 0xc7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00};
+    int enumerated = 0;
     for (int i = 0; i < 6; i++) {
-        memset(d, 0, 44);
-        *(uint32_t*)d = 44;
-        *(uint32_t*)(d + 16) = 0x01 | 0x02;
-        *(uint32_t*)(d + 20) = i;
-        guest_call(cb, 2, (uint32_t[]){G(d), ref});
+        if (!guid1[i] || !(flags == 0 || (flags & 3))) continue;
+        memset(H(o), 0, 316);
+        ST32(o, 316);
+        ST32(o + 4, guid1[i]);
+        ST16(o + 8, 0xc9f3);
+        ST16(o + 10, 0x11cf);
+        memcpy(H(o + 12), tail, 8);
+        ST32(o + 20, 4u * i);
+        ST32(o + 24, 2u | ((uint32_t)i << 8));
+        strcpy((char*)H(o + 32), names[i]);
+        uint32_t args[2] = {o, ref};
+        enumerated++;
+        if (!guest_call(cb, 2, args)) break;
     }
+    vlog("EnumObjects DEV_PAD: enumerated %d axes\n", enumerated);
     c->eax = 0;
 }
 
 static void dev_GetCapabilities(Ctx* c) {
-    uint32_t p = ARG(1);
-    ST32(p + 8, 8);
-    ST32(p + 12, 12);
-    ST32(p + 16, 1);
+    uint32_t p = ARG(1), k = (uint32_t)dev_kind(c);
+    ST32(p + 4, 1);  /* DIDC_ATTACHED */
+    ST32(p + 8, k == DEV_PAD ? 0x0215 : k == DEV_KEYBOARD ? 0x13 : 0x12);
+    ST32(p + 12, k == DEV_PAD ? 4 : k == DEV_MOUSE ? 2 : 0);
+    ST32(p + 16, k == DEV_PAD ? 9 : k == DEV_MOUSE ? 3 : 128);
+    ST32(p + 20, k == DEV_PAD ? 1 : 0);
+    vlog("GetCapabilities dev %u: type=0x%x axes=%u buttons=%u attached=1\n",
+         k, LD32(p + 8), LD32(p + 12), LD32(p + 16));
     c->eax = 0;
 }
 
@@ -220,11 +313,12 @@ static void dev_GetDeviceInfo(Ctx* c) {
 
 static void dev_GetProperty(Ctx* c) {
     uint32_t prop = ARG(1), p = ARG(2);
-    if (prop == 4) {
-        uint32_t obj = LD32(p + 8), how = LD32(p + 12), i = how == 1 ? obj / 4 : how == 2 ? (obj >> 8) & 0xff : 0;
+    if (prop == 4 && p) {
+        uint32_t obj = LD32(p + 8), how = LD32(p + 12);
+        int i = how == 1 ? obj / 4 : how == 2 ? (obj >> 8) & 0xff : 0;
         ST32(p + 16, (uint32_t)g_min[i & 7]);
         ST32(p + 20, (uint32_t)g_max[i & 7]);
-    } else if (LD32(p) >= 20) {
+    } else if (p && LD32(p) >= 20) {
         ST32(p + 16, 0);
     }
     c->eax = 0;

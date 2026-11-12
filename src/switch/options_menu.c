@@ -38,7 +38,8 @@ static MenuRow s_controls_rows[] = {
     {"Camera Invert X", 0, 2, {"Normal", "Inverted"}, "Horizontal camera rotation"},
     {"Camera Invert Y", 0, 2, {"Normal", "Inverted"}, "Vertical camera pitch"},
     {"Stick Sensitivity", 2, 5, {"0.5x", "0.75x", "1.0x (Normal)", "1.25x", "1.5x"}, "Look stick sensitivity"},
-    {"Vibration / Rumble", 1, 2, {"Off", "On"}, "HD Rumble feedback on hits & web swing"}
+    {"Vibration / Rumble", 1, 2, {"Off", "On"}, "HD Rumble feedback on hits & web swing"},
+    {"Swap A/B buttons", 0, 2, {"Off (B: Jump, A: Action)", "On (A: Jump, B: Action)"}, "Swap A and B button functions"}
 };
 
 static MenuRow s_perf_rows[] = {
@@ -98,14 +99,21 @@ int options_get_fps_cap(void) {
 int options_get_vsync(void) { return s_perf_rows[1].cur; }
 int options_show_fps(void) { return s_perf_rows[2].cur; }
 int options_get_wireframe(void) { return s_debug_rows[0].cur; }
+int options_get_cam_invert_x(void) { return s_controls_rows[0].cur; }
+int options_get_cam_invert_y(void) { return s_controls_rows[1].cur; }
+float options_get_sensitivity(void) {
+    static const float s[] = {0.5f, 0.75f, 1.0f, 1.25f, 1.5f};
+    return s[s_controls_rows[2].cur];
+}
+int options_get_swap_ab(void) { return s_controls_rows[4].cur; }
 
 static void save_settings(void) {
     FILE* f = fopen(USM_DIR "settings.ini", "w");
     if (!f) return;
     fprintf(f, "[graphics]\nview_dist=%d\nfog=%d\nparticles=%d\nres=%d\n\n",
             s_graphics_rows[0].cur, s_graphics_rows[1].cur, s_graphics_rows[2].cur, s_graphics_rows[3].cur);
-    fprintf(f, "[controls]\ninvert_x=%d\ninvert_y=%d\nsens=%d\nrumble=%d\n\n",
-            s_controls_rows[0].cur, s_controls_rows[1].cur, s_controls_rows[2].cur, s_controls_rows[3].cur);
+    fprintf(f, "[controls]\ninvert_x=%d\ninvert_y=%d\nsens=%d\nrumble=%d\nswap_ab=%d\n\n",
+            s_controls_rows[0].cur, s_controls_rows[1].cur, s_controls_rows[2].cur, s_controls_rows[3].cur, s_controls_rows[4].cur);
     fprintf(f, "[performance]\nfps_cap=%d\nvsync=%d\nshow_fps=%d\ndensity=%d\n\n",
             s_perf_rows[0].cur, s_perf_rows[1].cur, s_perf_rows[2].cur, s_perf_rows[3].cur);
     fprintf(f, "[qol]\nskip_intro=%d\nfast_map=%d\n\n",
@@ -129,6 +137,10 @@ static void load_settings(void) {
         else if (sscanf(line, "density=%d", &v) == 1) s_perf_rows[3].cur = v;
         else if (sscanf(line, "skip_intro=%d", &v) == 1) s_qol_rows[0].cur = v;
         else if (sscanf(line, "wireframe=%d", &v) == 1) s_debug_rows[0].cur = v;
+        else if (sscanf(line, "swap_ab=%d", &v) == 1) s_controls_rows[4].cur = v;
+        else if (sscanf(line, "invert_x=%d", &v) == 1) s_controls_rows[0].cur = v;
+        else if (sscanf(line, "invert_y=%d", &v) == 1) s_controls_rows[1].cur = v;
+        else if (sscanf(line, "sens=%d", &v) == 1) s_controls_rows[2].cur = v;
     }
     fclose(f);
 }
@@ -139,10 +151,8 @@ void options_menu_init(void) {
 
 void options_menu_update(uint64_t kDown, uint64_t kHeld, int32_t lx, int32_t ly) {
     (void)kHeld;
-    if (kDown & HidNpadButton_Minus) {
-        options_menu_toggle();
-        return;
-    }
+    (void)lx;
+    (void)ly;
     if (!g_open) return;
 
     if (kDown & HidNpadButton_B) {

@@ -18,6 +18,10 @@ int options_get_fps_cap(void);
 int options_get_vsync(void);
 int options_show_fps(void);
 int options_get_wireframe(void);
+int options_get_swap_ab(void);
+int options_get_cam_invert_x(void);
+int options_get_cam_invert_y(void);
+float options_get_sensitivity(void);
 
 #ifdef __cplusplus
 }
