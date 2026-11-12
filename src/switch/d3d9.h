@@ -72,7 +72,7 @@ static inline const uint32_t* obj_copy(uint32_t obj, uint32_t* bytes) {
     return H(LD32(obj + 8));
 }
 
-#ifdef USM_VITAGL
+#if defined(USM_VITAGL) || defined(USM_OPENGL)
 void gl_init(uint32_t bw, uint32_t bh);
 void gl_present(void);
 void gl_clear(uint32_t count, uint32_t rects, uint32_t flags, uint32_t color, float z, uint32_t stencil);  /* rects: guest */

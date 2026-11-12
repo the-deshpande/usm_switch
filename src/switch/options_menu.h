@@ -1,0 +1,24 @@
+#pragma once
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void options_menu_init(void);
+int options_menu_is_open(void);
+void options_menu_toggle(void);
+void options_menu_update(uint64_t kDown, uint64_t kHeld, int32_t lx, int32_t ly);
+void options_menu_render(uint32_t screen_w, uint32_t screen_h);
+
+/* Settings queries */
+float options_get_density(void);
+float options_get_view_distance(void);
+int options_get_fps_cap(void);
+int options_get_vsync(void);
+int options_show_fps(void);
+int options_get_wireframe(void);
+
+#ifdef __cplusplus
+}
+#endif

@@ -35,11 +35,16 @@ target_include_directories(usm_switch.elf PRIVATE
     ${SRC}/recomp/gen
     ${SRC}/switch
     ${CMAKE_CURRENT_SOURCE_DIR}/../vendor/ffmpeg
+    /opt/devkitpro/portlibs/switch/include
+)
+
+target_link_directories(usm_switch.elf PRIVATE
+    /opt/devkitpro/portlibs/switch/lib
 )
 
 # Runtime semantics matching the original x86:
 # Wrapping arithmetic, unaligned / type-punning pointers, unsigned char
-target_compile_definitions(usm_switch.elf PRIVATE RC_RELEASE __SWITCH__)
+target_compile_definitions(usm_switch.elf PRIVATE RC_RELEASE __SWITCH__ USM_OPENGL)
 target_compile_options(usm_switch.elf PRIVATE
     -O1 -std=gnu11 -w
     -fno-strict-aliasing -fwrapv -funsigned-char
@@ -51,7 +56,7 @@ target_link_libraries(usm_switch.elf PRIVATE
     -lnx
     -lEGL -lglapi -lglad
     -ldrm_nouveau
-    -lpthread -lm
+    -lstdc++ -lpthread -lm
 )
 
 # Create Homebrew NRO

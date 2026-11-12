@@ -6,6 +6,7 @@
 #include <stdlib.h>
 
 #include "com.h"
+#include "options_menu.h"
 #include "usm_switch.h"
 
 extern PadState pad;
@@ -25,9 +26,24 @@ static HidAnalogStickState g_lstick, g_rstick;
 
 static void poll(void) {
     padUpdate(&pad);
+    u64 kDown = padGetButtonsDown(&pad);
     g_buttons = padGetButtons(&pad);
     g_lstick = padGetStickPos(&pad, 0);
     g_rstick = padGetStickPos(&pad, 1);
+
+    if (kDown & HidNpadButton_Minus) {
+        options_menu_toggle();
+    }
+
+    if (options_menu_is_open()) {
+        options_menu_update(kDown, g_buttons, g_lstick.x, g_lstick.y);
+        g_buttons = 0;
+        g_lstick.x = g_lstick.y = 0;
+        g_rstick.x = g_rstick.y = 0;
+        memset(g_keys, 0, sizeof g_keys);
+        memset(g_mouse, 0, sizeof g_mouse);
+        return;
+    }
 
     memset(g_keys, 0, sizeof g_keys);
 #define KEY(k, on) do { if (on) g_keys[k] = 0x80; } while (0)
