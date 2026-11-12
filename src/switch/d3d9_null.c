@@ -520,7 +520,7 @@ static void dev_Present(Ctx* c) {
 #ifdef USM_OPENGL
         extern uint64_t g_present_us;
         extern uint64_t g_tex_live;
-        vlog("render thread: %.1f ms/frame busy, %.1f in the frame cap and swap; %.0f triangles/frame, textures %u MB in GL\n", (g_render_us - g_present_us) / 1000.0 / f, g_present_us / 1000.0 / f, g_tris / f, (uint32_t)(g_tex_live >> 20));
+        vlog("render thread: %.1f ms/frame busy, %.1f in the frame cap and swap; %.0f triangles/frame, textures %u MB in GL\n", (g_render_us > g_present_us ? g_render_us - g_present_us : 0) / 1000.0 / f, g_present_us / 1000.0 / f, g_tris / f, (uint32_t)(g_tex_live >> 20));
         g_present_us = 0;
         extern uint64_t g_dt[5];
         vlog("draw time ms/frame: setup %.1f program %.1f uniforms %.1f textures %.1f rest %.1f\n", g_dt[0] / 1000.0 / f, g_dt[1] / 1000.0 / f, g_dt[2] / 1000.0 / f, g_dt[3] / 1000.0 / f, g_dt[4] / 1000.0 / f);

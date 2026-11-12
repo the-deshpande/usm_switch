@@ -16,7 +16,7 @@ static int g_row = 0;
 
 enum { TAB_GRAPHICS, TAB_CONTROLS, TAB_PERF, TAB_QOL, TAB_SYSTEM, TAB_DEBUG, NUM_TABS };
 static const char* kTabNames[NUM_TABS] = {
-    "Graficos", "Controles", "Rendimiento", "QoL", "Sistema", "Depuracion"
+    "Graphics", "Controls", "Performance", "QoL", "System", "Debug"
 };
 
 typedef struct {
@@ -28,7 +28,7 @@ typedef struct {
 } MenuRow;
 
 static MenuRow s_graphics_rows[] = {
-    {"View distance", 2, 6, {"80 m", "100 m", "120 m (Default)", "150 m", "200 m", "Max (No fog)"}, "City view distance before fog"},
+    {"View distance", 2, 6, {"80 m", "100 m", "120 m (Default)", "150 m", "200 m", "Max (Far City)"}, "City view distance before fog"},
     {"Far city fog", 1, 2, {"Off", "On"}, "Show distance fog over Manhattan"},
     {"Particle detail", 1, 3, {"Low", "Medium (Default)", "High"}, "Smoke, fire, and explosion effects"},
     {"Resolution mode", 0, 2, {"Native 720p", "Enhanced 1080p"}, "Internal rendering target resolution"}
@@ -50,8 +50,8 @@ static MenuRow s_perf_rows[] = {
 };
 
 static MenuRow s_qol_rows[] = {
-    {"Skip intro movies", 1, 2, {"Off", "On"}, "Automatically bypass splash screens"},
-    {"Fast map pause", 1, 2, {"Off", "On"}, "Speed up minimap transition"}
+    {"Skip intro movies", 0, 2, {"Off", "On"}, "Automatically bypass splash screens"},
+    {"Fast map pause", 0, 2, {"Off", "On"}, "Speed up minimap transition"}
 };
 
 static MenuRow s_system_rows[] = {
@@ -70,42 +70,105 @@ static MenuRow* s_tab_rows[NUM_TABS] = {
 };
 
 static int s_tab_counts[NUM_TABS] = {
-    sizeof(s_graphics_rows)/sizeof(s_graphics_rows[0]),
-    sizeof(s_controls_rows)/sizeof(s_controls_rows[0]),
-    sizeof(s_perf_rows)/sizeof(s_perf_rows[0]),
-    sizeof(s_qol_rows)/sizeof(s_qol_rows[0]),
-    sizeof(s_system_rows)/sizeof(s_system_rows[0]),
-    sizeof(s_debug_rows)/sizeof(s_debug_rows[0])
+    (int)(sizeof(s_graphics_rows)/sizeof(s_graphics_rows[0])),
+    (int)(sizeof(s_controls_rows)/sizeof(s_controls_rows[0])),
+    (int)(sizeof(s_perf_rows)/sizeof(s_perf_rows[0])),
+    (int)(sizeof(s_qol_rows)/sizeof(s_qol_rows[0])),
+    (int)(sizeof(s_system_rows)/sizeof(s_system_rows[0])),
+    (int)(sizeof(s_debug_rows)/sizeof(s_debug_rows[0]))
 };
+
+static uint32_t s_status_timer = 0;
+static const char* s_status_msg = NULL;
 
 int options_menu_is_open(void) { return g_open; }
 void options_menu_toggle(void) { g_open = !g_open; }
 
 float options_get_density(void) {
     static const float d[] = {0.0f, 0.2f, 0.5f, 0.8f, 1.0f};
-    return d[s_perf_rows[3].cur];
+    int idx = s_perf_rows[3].cur;
+    if (idx < 0 || idx >= 5) idx = 2;
+    return d[idx];
 }
 
 float options_get_view_distance(void) {
-    static const float v[] = {80.0f, 100.0f, 120.0f, 150.0f, 200.0f, 0.0f};
-    return v[s_graphics_rows[0].cur];
+    static const float v[] = {80.0f, 100.0f, 120.0f, 150.0f, 200.0f, 1000.0f};
+    int idx = s_graphics_rows[0].cur;
+    if (idx < 0 || idx >= 6) idx = 2;
+    return v[idx];
 }
 
 int options_get_fps_cap(void) {
     static const int c[] = {20, 30, 60};
-    return c[s_perf_rows[0].cur];
+    int idx = s_perf_rows[0].cur;
+    if (idx < 0 || idx >= 3) idx = 1;
+    return c[idx];
 }
 
-int options_get_vsync(void) { return s_perf_rows[1].cur; }
-int options_show_fps(void) { return s_perf_rows[2].cur; }
-int options_get_wireframe(void) { return s_debug_rows[0].cur; }
-int options_get_cam_invert_x(void) { return s_controls_rows[0].cur; }
-int options_get_cam_invert_y(void) { return s_controls_rows[1].cur; }
+int options_get_vsync(void) {
+    int idx = s_perf_rows[1].cur;
+    return (idx == 1);
+}
+
+int options_show_fps(void) {
+    int idx = s_perf_rows[2].cur;
+    return (idx == 1);
+}
+
+int options_get_wireframe(void) {
+    int idx = s_debug_rows[0].cur;
+    return (idx == 1);
+}
+
+int options_get_cam_invert_x(void) {
+    int idx = s_controls_rows[0].cur;
+    return (idx == 1);
+}
+
+int options_get_cam_invert_y(void) {
+    int idx = s_controls_rows[1].cur;
+    return (idx == 1);
+}
+
 float options_get_sensitivity(void) {
     static const float s[] = {0.5f, 0.75f, 1.0f, 1.25f, 1.5f};
-    return s[s_controls_rows[2].cur];
+    int idx = s_controls_rows[2].cur;
+    if (idx < 0 || idx >= 5) idx = 2;
+    return s[idx];
 }
-int options_get_swap_ab(void) { return s_controls_rows[4].cur; }
+
+int options_get_swap_ab(void) {
+    int idx = s_controls_rows[4].cur;
+    return (idx == 1);
+}
+
+static void reset_defaults(void) {
+    s_graphics_rows[0].cur = 2; /* 120 m (Default) */
+    s_graphics_rows[1].cur = 1; /* On */
+    s_graphics_rows[2].cur = 1; /* Medium (Default) */
+    s_graphics_rows[3].cur = 0; /* Native 720p */
+
+    s_controls_rows[0].cur = 0; /* Normal */
+    s_controls_rows[1].cur = 0; /* Normal */
+    s_controls_rows[2].cur = 2; /* 1.0x (Normal) */
+    s_controls_rows[3].cur = 1; /* On */
+    s_controls_rows[4].cur = 0; /* Off (B: Jump, A: Action) */
+
+    s_perf_rows[0].cur = 1; /* 30 FPS (Stock) */
+    s_perf_rows[1].cur = 1; /* On (Double-buffered) */
+    s_perf_rows[2].cur = 0; /* Hidden */
+    s_perf_rows[3].cur = 2; /* Medium (Default) */
+
+    s_qol_rows[0].cur = 0; /* Off */
+    s_qol_rows[1].cur = 0; /* Off */
+
+    s_system_rows[0].cur = 0;
+    s_system_rows[1].cur = 0;
+
+    s_debug_rows[0].cur = 0; /* Off */
+    s_debug_rows[1].cur = 0; /* Off */
+    s_debug_rows[2].cur = 0;
+}
 
 static void save_settings(void) {
     FILE* f = fopen(USM_DIR "settings.ini", "w");
@@ -130,23 +193,51 @@ static void load_settings(void) {
     char line[128];
     while (fgets(line, sizeof line, f)) {
         int v;
-        if (sscanf(line, "view_dist=%d", &v) == 1) s_graphics_rows[0].cur = v;
-        else if (sscanf(line, "fps_cap=%d", &v) == 1) s_perf_rows[0].cur = v;
-        else if (sscanf(line, "vsync=%d", &v) == 1) s_perf_rows[1].cur = v;
-        else if (sscanf(line, "show_fps=%d", &v) == 1) s_perf_rows[2].cur = v;
-        else if (sscanf(line, "density=%d", &v) == 1) s_perf_rows[3].cur = v;
-        else if (sscanf(line, "skip_intro=%d", &v) == 1) s_qol_rows[0].cur = v;
-        else if (sscanf(line, "wireframe=%d", &v) == 1) s_debug_rows[0].cur = v;
-        else if (sscanf(line, "swap_ab=%d", &v) == 1) s_controls_rows[4].cur = v;
-        else if (sscanf(line, "invert_x=%d", &v) == 1) s_controls_rows[0].cur = v;
-        else if (sscanf(line, "invert_y=%d", &v) == 1) s_controls_rows[1].cur = v;
-        else if (sscanf(line, "sens=%d", &v) == 1) s_controls_rows[2].cur = v;
+        if (sscanf(line, "view_dist=%d", &v) == 1) {
+            if (v >= 0 && v < s_graphics_rows[0].num_opts) s_graphics_rows[0].cur = v;
+        } else if (sscanf(line, "fog=%d", &v) == 1) {
+            if (v >= 0 && v < s_graphics_rows[1].num_opts) s_graphics_rows[1].cur = v;
+        } else if (sscanf(line, "particles=%d", &v) == 1) {
+            if (v >= 0 && v < s_graphics_rows[2].num_opts) s_graphics_rows[2].cur = v;
+        } else if (sscanf(line, "res=%d", &v) == 1) {
+            if (v >= 0 && v < s_graphics_rows[3].num_opts) s_graphics_rows[3].cur = v;
+        } else if (sscanf(line, "invert_x=%d", &v) == 1) {
+            if (v >= 0 && v < s_controls_rows[0].num_opts) s_controls_rows[0].cur = v;
+        } else if (sscanf(line, "invert_y=%d", &v) == 1) {
+            if (v >= 0 && v < s_controls_rows[1].num_opts) s_controls_rows[1].cur = v;
+        } else if (sscanf(line, "sens=%d", &v) == 1) {
+            if (v >= 0 && v < s_controls_rows[2].num_opts) s_controls_rows[2].cur = v;
+        } else if (sscanf(line, "rumble=%d", &v) == 1) {
+            if (v >= 0 && v < s_controls_rows[3].num_opts) s_controls_rows[3].cur = v;
+        } else if (sscanf(line, "swap_ab=%d", &v) == 1) {
+            if (v >= 0 && v < s_controls_rows[4].num_opts) s_controls_rows[4].cur = v;
+        } else if (sscanf(line, "fps_cap=%d", &v) == 1) {
+            if (v >= 0 && v < s_perf_rows[0].num_opts) s_perf_rows[0].cur = v;
+        } else if (sscanf(line, "vsync=%d", &v) == 1) {
+            if (v >= 0 && v < s_perf_rows[1].num_opts) s_perf_rows[1].cur = v;
+        } else if (sscanf(line, "show_fps=%d", &v) == 1) {
+            if (v >= 0 && v < s_perf_rows[2].num_opts) s_perf_rows[2].cur = v;
+        } else if (sscanf(line, "density=%d", &v) == 1) {
+            if (v >= 0 && v < s_perf_rows[3].num_opts) s_perf_rows[3].cur = v;
+        } else if (sscanf(line, "skip_intro=%d", &v) == 1) {
+            if (v >= 0 && v < s_qol_rows[0].num_opts) s_qol_rows[0].cur = v;
+        } else if (sscanf(line, "fast_map=%d", &v) == 1) {
+            if (v >= 0 && v < s_qol_rows[1].num_opts) s_qol_rows[1].cur = v;
+        } else if (sscanf(line, "wireframe=%d", &v) == 1) {
+            if (v >= 0 && v < s_debug_rows[0].num_opts) s_debug_rows[0].cur = v;
+        } else if (sscanf(line, "log=%d", &v) == 1) {
+            if (v >= 0 && v < s_debug_rows[1].num_opts) s_debug_rows[1].cur = v;
+        }
     }
     fclose(f);
 }
 
+static void init_gui_gl(void);
+
 void options_menu_init(void) {
+    reset_defaults();
     load_settings();
+    init_gui_gl();
 }
 
 void options_menu_update(uint64_t kDown, uint64_t kHeld, int32_t lx, int32_t ly) {
@@ -170,23 +261,29 @@ void options_menu_update(uint64_t kDown, uint64_t kHeld, int32_t lx, int32_t ly)
     }
 
     int count = s_tab_counts[g_tab];
-    if (kDown & (HidNpadButton_Up | HidNpadButton_StickLUp) || ly > 18000) {
+    if (kDown & (HidNpadButton_Up | HidNpadButton_StickLUp)) {
         g_row = (g_row + count - 1) % count;
     }
-    if (kDown & (HidNpadButton_Down | HidNpadButton_StickLDown) || ly < -18000) {
+    if (kDown & (HidNpadButton_Down | HidNpadButton_StickLDown)) {
         g_row = (g_row + 1) % count;
     }
 
     MenuRow* r = &s_tab_rows[g_tab][g_row];
-    if (kDown & (HidNpadButton_Left | HidNpadButton_StickLLeft) || lx < -18000) {
-        if (r->num_opts > 1) r->cur = (r->cur + r->num_opts - 1) % r->num_opts;
+    if (kDown & (HidNpadButton_Left | HidNpadButton_StickLLeft)) {
+        if (r->num_opts > 1) {
+            r->cur = (r->cur + r->num_opts - 1) % r->num_opts;
+        }
     }
-    if (kDown & (HidNpadButton_Right | HidNpadButton_StickLRight | HidNpadButton_A) || lx > 18000) {
+    if (kDown & (HidNpadButton_Right | HidNpadButton_StickLRight | HidNpadButton_A)) {
         if (g_tab == TAB_SYSTEM && g_row == 0) {
             save_settings();
+            s_status_msg = "Settings saved to SD (settings.ini)";
+            s_status_timer = 120;
         } else if (g_tab == TAB_SYSTEM && g_row == 1) {
             remove(USM_DIR "settings.ini");
-            load_settings();
+            reset_defaults();
+            s_status_msg = "Player defaults restored";
+            s_status_timer = 120;
         } else if (r->num_opts > 1) {
             r->cur = (r->cur + 1) % r->num_opts;
         }
@@ -232,7 +329,7 @@ static void init_gui_gl(void) {
     if (s_prog) return;
 
     /* Create 256x256 RGBA atlas for Aileron font */
-    uint32_t atlas[256 * 256];
+    static uint32_t atlas[256 * 256];
     memset(atlas, 0, sizeof atlas);
     int cx = 0, cy = 0;
     for (int i = 0; i < 95; i++) {
@@ -258,6 +355,8 @@ static void init_gui_gl(void) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 256, 256, 0, GL_RGBA, GL_UNSIGNED_BYTE, atlas);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     static const char* vs =
         "#version 430 core\n"
@@ -322,7 +421,9 @@ static void init_gui_gl(void) {
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(MenuVert), (void*)offsetof(MenuVert, u));
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(MenuVert), (void*)offsetof(MenuVert, r));
-    glBindVertexArray(0);
+
+    /* Restore main VAO */
+    gl_bind_main_vao();
 }
 
 static void flush_verts(int mode) {
@@ -367,16 +468,25 @@ static float draw_text(float x, float y, float scale, const char* str, float r, 
     return cur_x - x;
 }
 
-static void restore_gl_state(GLint prev_vao, GLint prev_prog, GLint prev_vbo, const GLint* prev_vp,
-                             GLboolean prev_blend, GLboolean prev_depth, GLboolean prev_cull, GLboolean prev_scissor) {
+static void restore_gl_state(GLint prev_prog, GLint prev_vbo, GLint prev_active_tex, GLint prev_tex,
+                             const GLint* prev_vp,
+                             GLboolean prev_blend, GLint prev_blend_src_rgb, GLint prev_blend_dst_rgb,
+                             GLint prev_blend_src_a, GLint prev_blend_dst_a,
+                             GLint prev_blend_eq_rgb, GLint prev_blend_eq_a,
+                             GLboolean prev_depth, GLboolean prev_cull, GLboolean prev_scissor) {
     if (prev_blend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    glBlendFuncSeparate(prev_blend_src_rgb, prev_blend_dst_rgb, prev_blend_src_a, prev_blend_dst_a);
+    glBlendEquationSeparate(prev_blend_eq_rgb, prev_blend_eq_a);
     if (prev_depth) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
     if (prev_cull) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
     if (prev_scissor) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
     glViewport(prev_vp[0], prev_vp[1], prev_vp[2], prev_vp[3]);
     glUseProgram(prev_prog);
     glBindBuffer(GL_ARRAY_BUFFER, prev_vbo);
-    glBindVertexArray(prev_vao);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, prev_tex);
+    glActiveTexture(prev_active_tex);
+    gl_bind_main_vao();
 }
 
 void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
@@ -396,11 +506,24 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
 
     init_gui_gl();
 
-    GLint prev_vao = 0, prev_prog = 0, prev_vbo = 0, prev_vp[4];
-    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prev_vao);
+    /* Save comprehensive GL state */
+    GLint prev_prog = 0, prev_vbo = 0, prev_active_tex = GL_TEXTURE0, prev_tex = 0;
+    GLint prev_vp[4] = {0, 0, (GLint)screen_w, (GLint)screen_h};
+    GLint prev_blend_src_rgb = GL_ONE, prev_blend_dst_rgb = GL_ZERO;
+    GLint prev_blend_src_a = GL_ONE, prev_blend_dst_a = GL_ZERO;
+    GLint prev_blend_eq_rgb = GL_FUNC_ADD, prev_blend_eq_a = GL_FUNC_ADD;
+
     glGetIntegerv(GL_CURRENT_PROGRAM, &prev_prog);
     glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prev_vbo);
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prev_active_tex);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prev_tex);
     glGetIntegerv(GL_VIEWPORT, prev_vp);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &prev_blend_src_rgb);
+    glGetIntegerv(GL_BLEND_DST_RGB, &prev_blend_dst_rgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &prev_blend_src_a);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &prev_blend_dst_a);
+    glGetIntegerv(GL_BLEND_EQUATION_RGB, &prev_blend_eq_rgb);
+    glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &prev_blend_eq_a);
     GLboolean prev_blend = glIsEnabled(GL_BLEND);
     GLboolean prev_depth = glIsEnabled(GL_DEPTH_TEST);
     GLboolean prev_cull = glIsEnabled(GL_CULL_FACE);
@@ -412,7 +535,8 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     glDisable(GL_CULL_FACE);
     glDisable(GL_SCISSOR_TEST);
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    glBlendEquation(GL_FUNC_ADD);
 
     glUseProgram(s_prog);
     glUniform2f(s_u_res, (float)screen_w, (float)screen_h);
@@ -428,12 +552,20 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
         flush_verts(0);
         draw_text(screen_w - 132.0f, 20.0f, 0.75f, fps_str, 0.3f, 1.0f, 0.4f, 1.0f);
         flush_verts(1);
-        restore_gl_state(prev_vao, prev_prog, prev_vbo, prev_vp, prev_blend, prev_depth, prev_cull, prev_scissor);
+        restore_gl_state(prev_prog, prev_vbo, prev_active_tex, prev_tex, prev_vp,
+                         prev_blend, prev_blend_src_rgb, prev_blend_dst_rgb,
+                         prev_blend_src_a, prev_blend_dst_a,
+                         prev_blend_eq_rgb, prev_blend_eq_a,
+                         prev_depth, prev_cull, prev_scissor);
         return;
     }
 
     if (!g_open) {
-        restore_gl_state(prev_vao, prev_prog, prev_vbo, prev_vp, prev_blend, prev_depth, prev_cull, prev_scissor);
+        restore_gl_state(prev_prog, prev_vbo, prev_active_tex, prev_tex, prev_vp,
+                         prev_blend, prev_blend_src_rgb, prev_blend_dst_rgb,
+                         prev_blend_src_a, prev_blend_dst_a,
+                         prev_blend_eq_rgb, prev_blend_eq_a,
+                         prev_depth, prev_cull, prev_scissor);
         return;
     }
 
@@ -484,16 +616,25 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
         }
     }
 
-    /* Bottom help text */
+    /* Bottom help text / status message */
     MenuRow* sel = &s_tab_rows[g_tab][g_row];
-    draw_text(95.0f, screen_h - 104.0f, 0.75f, sel->help, 0.90f, 0.90f, 0.60f, 1.0f);
+    if (s_status_timer > 0) {
+        s_status_timer--;
+        draw_text(95.0f, screen_h - 104.0f, 0.75f, s_status_msg ? s_status_msg : "", 0.30f, 1.0f, 0.40f, 1.0f);
+    } else {
+        draw_text(95.0f, screen_h - 104.0f, 0.75f, sel->help, 0.90f, 0.90f, 0.60f, 1.0f);
+    }
 
     /* Quick controls guide */
     draw_text(95.0f, screen_h - 78.0f, 0.70f,
-              "[L/R] Cambiar pestana   [D-Pad] Navegar   [A / Flechas] Ajustar   [B] Volver",
+              "[L/R] Switch Tab   [D-Pad] Navigate   [A / Left-Right] Adjust   [B] Close",
               0.55f, 0.65f, 0.75f, 0.90f);
 
     flush_verts(1);
 
-    restore_gl_state(prev_vao, prev_prog, prev_vbo, prev_vp, prev_blend, prev_depth, prev_cull, prev_scissor);
+    restore_gl_state(prev_prog, prev_vbo, prev_active_tex, prev_tex, prev_vp,
+                     prev_blend, prev_blend_src_rgb, prev_blend_dst_rgb,
+                     prev_blend_src_a, prev_blend_dst_a,
+                     prev_blend_eq_rgb, prev_blend_eq_a,
+                     prev_depth, prev_cull, prev_scissor);
 }

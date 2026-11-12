@@ -24,6 +24,11 @@
 #define SWITCH_SCREEN_W 1280
 #define SWITCH_SCREEN_H 720
 
+GLuint g_main_vao = 0;
+void gl_bind_main_vao(void) {
+    if (g_main_vao) glBindVertexArray(g_main_vao);
+}
+
 #ifndef GL_ALPHA
 #define GL_ALPHA 0x1906
 #endif
@@ -136,11 +141,10 @@ static void init_(uint32_t bw, uint32_t bh) {
     if (!gladLoadGLLoader((GLADloadproc)eglGetProcAddress)) {
         gladLoadGL();
     }
-    static GLuint s_main_vao = 0;
-    if (!s_main_vao) {
-        glGenVertexArrays(1, &s_main_vao);
+    if (!g_main_vao) {
+        glGenVertexArrays(1, &g_main_vao);
     }
-    glBindVertexArray(s_main_vao);
+    glBindVertexArray(g_main_vao);
     eglSwapInterval(s_display, 1);
     options_menu_init();
     vlog("gl: Nintendo Switch OpenGL initialized: GL %s, SL %s, Renderer %s\n",
@@ -332,6 +336,8 @@ static void present_(void) {
 
     /* Render Options Menu overlay if active */
     options_menu_render(SWITCH_SCREEN_W, SWITCH_SCREEN_H);
+    if (g_main_vao) glBindVertexArray(g_main_vao);
+    gc_reset();
 
     eglSwapBuffers(s_display, s_surface);
     g_present_us += (armTicksToNs(armGetSystemTick()) / 1000ull) - t;
@@ -339,6 +345,7 @@ static void present_(void) {
     glColorMask(1, 1, 1, 1), glDepthMask(1), glStencilMask(0xff);
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    gc_reset();
 }
 
 static float far_dist(void);
@@ -985,6 +992,7 @@ __attribute__((hot)) static void draw_(const DrawCmd* d, uint32_t cmd_size) {
     GLenum mode;
     int count = count_of(d->prim, d->n, &mode);
     if (!count || !bind_target()) return;
+    if (g_main_vao) glBindVertexArray(g_main_vao);
     if (d->client) {
         if (!g_client_vbo) glGenBuffers(1, &g_client_vbo);
         glBindBuffer(GL_ARRAY_BUFFER, g_client_vbo);

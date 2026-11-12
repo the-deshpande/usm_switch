@@ -5,6 +5,8 @@
 extern "C" {
 #endif
 
+void gl_bind_main_vao(void);
+
 void options_menu_init(void);
 int options_menu_is_open(void);
 void options_menu_toggle(void);
