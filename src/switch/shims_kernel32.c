@@ -1,6 +1,7 @@
 /* KERNEL32 (stdcall: shims.c pops the arguments). Handles are indices into one table of host objects. */
 #include <ctype.h>
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <malloc.h>
 #include <pthread.h>
@@ -498,7 +499,18 @@ static void GetFileAttributesA_(Ctx* c) {
 static void CreateDirectoryA_(Ctx* c) {
     char p[512];
     map_path(S(0), p, sizeof p);
-    c->eax = mkdir(p, 0777) == 0;
+    int res = mkdir(p, 0777);
+    if (res == 0) {
+        set_error(c, 0);
+        c->eax = 1;
+    } else {
+        if (errno == EEXIST) {
+            set_error(c, 183); // ERROR_ALREADY_EXISTS
+        } else {
+            set_error(c, 3);   // ERROR_PATH_NOT_FOUND
+        }
+        c->eax = 0;
+    }
 }
 static void DeleteFileA_(Ctx* c) {
     char p[512];

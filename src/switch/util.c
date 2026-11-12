@@ -77,16 +77,41 @@ int gformat(char* out, uint32_t n, const char* fmt, uint32_t ap) {
 }
 
 void map_path(const char* game, char* out, unsigned n) {
+    if (!game) {
+        if (n) out[0] = 0;
+        return;
+    }
     char p[512];
     unsigned k = 0;
     for (; game[k] && k < sizeof p - 1; k++) p[k] = game[k] == '\\' ? '/' : game[k];
     p[k] = 0;
+
+    if (!strncmp(p, "sdmc:/", 6) || !strncmp(p, "romfs:/", 7)) {
+        snprintf(out, n, "%s", p);
+        return;
+    }
+
     const char* s = p;
     if (isalpha((unsigned char)s[0]) && s[1] == ':') s += 2;
     while (*s == '/') s++;
-    if (!strncasecmp(s, "USM/", 4)) s += 4;
+    if (!strcasecmp(s, "USM")) {
+        s += 3;
+    } else if (!strncasecmp(s, "USM/", 4)) {
+        s += 4;
+    }
     while (s[0] == '.' && s[1] == '/') s += 2;
-    snprintf(out, n, USM_DIR "%s", s);
+    while (*s == '/') s++;
+
+    if (*s == '\0') {
+        snprintf(out, n, "sdmc:/switch/usm");
+    } else {
+        snprintf(out, n, USM_DIR "%s", s);
+    }
+
+    size_t len = strlen(out);
+    while (len > strlen("sdmc:/switch/usm") && out[len - 1] == '/') {
+        out[--len] = '\0';
+    }
 }
 
 #include <unistd.h>

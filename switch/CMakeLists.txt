@@ -10,7 +10,7 @@ project(usm_switch C CXX)
 include("$ENV{DEVKITPRO}/cmake/Switch.cmake" REQUIRED)
 
 set(SWITCH_APP_TITLE "Ultimate Spider-Man")
-set(SWITCH_APP_AUTHOR "boomannotjeff / Switch Port")
+set(SWITCH_APP_AUTHOR "the_deshpande")
 set(SWITCH_APP_VERSION "1.0.0")
 
 set(SRC ${CMAKE_CURRENT_SOURCE_DIR}/../src)
@@ -69,5 +69,6 @@ nx_generate_nacp(usm_switch.nacp
 nx_create_nro(usm_switch
     TARGET usm_switch.elf
     NACP usm_switch.nacp
+    ICON ${CMAKE_CURRENT_SOURCE_DIR}/icon.jpg
 )
 

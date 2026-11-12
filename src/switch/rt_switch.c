@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <switch.h>
 
 #include "usm_switch.h"
@@ -18,19 +19,14 @@ static FILE* g_log = NULL;
 static pthread_mutex_t g_log_lock = PTHREAD_MUTEX_INITIALIZER;
 
 int log_on(void) {
-    static int on = -1;
-    if (on < 0) {
-        FILE* f = fopen(USM_DIR "debug.txt", "r");
-        on = (f != NULL);
-        if (f) fclose(f);
-    }
-    return on;
+    return 1;
 }
 
 void vlog(const char* fmt, ...) {
-    if (!log_on()) return;
     pthread_mutex_lock(&g_log_lock);
     if (!g_log) {
+        mkdir("sdmc:/switch", 0777);
+        mkdir(USM_DIR, 0777);
         remove(USM_DIR "log_prev.txt");
         rename(USM_DIR "log.txt", USM_DIR "log_prev.txt");
         g_log = fopen(USM_DIR "log.txt", "w");
@@ -124,15 +120,18 @@ Ctx* rc_ctx(void) {
 }
 
 void vcrash(const char* fmt, ...) {
-    char buf[256];
+    char buf[512];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
     vlog("%s", buf);
+    mkdir("sdmc:/switch", 0777);
+    mkdir(USM_DIR, 0777);
     FILE* f = fopen(USM_DIR "crash.txt", "a");
     if (f) {
         fprintf(f, "%s", buf);
+        fflush(f);
         fclose(f);
     }
 }

@@ -3,11 +3,13 @@
    initializes Horizon OS services and starts the translated C entry point. */
 #define RC_GUEST_WRITER
 #include <malloc.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <switch.h>
 
 #include "usm_switch.h"
@@ -16,6 +18,40 @@
 
 static uint8_t* g_image;
 PadState pad;
+
+/* libnx user exception handler for capturing crashes and dumping registers */
+alignas(16) u8 __nx_exception_stack[0x20000];
+u64 __nx_exception_stack_size = sizeof(__nx_exception_stack);
+
+void __libnx_exception_handler(ThreadExceptionDump* ctx) {
+    static int crashing = 0;
+    if (crashing) {
+        for (;;) svcSleepThread(1000000000ULL);
+    }
+    crashing = 1;
+
+    char buf[1024];
+    snprintf(buf, sizeof(buf),
+        "\n================ CRASH DUMP ================\n"
+        "Exception: 0x%x, ESR: 0x%x, FAR: 0x%llx\n"
+        "PC: 0x%llx, LR: 0x%llx, SP: 0x%llx, FP: 0x%llx\n"
+        "X0: 0x%llx, X1: 0x%llx, X2: 0x%llx, X3: 0x%llx\n"
+        "============================================\n",
+        ctx->error_desc, ctx->esr, (unsigned long long)ctx->far.x,
+        (unsigned long long)ctx->pc.x, (unsigned long long)ctx->lr.x,
+        (unsigned long long)ctx->sp.x, (unsigned long long)ctx->fp.x,
+        (unsigned long long)ctx->cpu_gprs[0].x, (unsigned long long)ctx->cpu_gprs[1].x,
+        (unsigned long long)ctx->cpu_gprs[2].x, (unsigned long long)ctx->cpu_gprs[3].x
+    );
+    vlog("%s", buf);
+    FILE* f = fopen(USM_DIR "crash.txt", "w");
+    if (f) {
+        fputs(buf, f);
+        fflush(f);
+        fclose(f);
+    }
+    svcReturnFromException(0xF801);
+}
 
 void fatal(const char* msg) {
     vlog("FATAL: %s\n", msg);
@@ -111,16 +147,35 @@ static uint32_t load_exe(void) {
     return entry;
 }
 
-PadState pad;
+typedef struct {
+    uint32_t entry;
+    int result;
+} GameThreadArgs;
+
+static void* game_thread(void* raw) {
+    GameThreadArgs* args = (GameThreadArgs*)raw;
+    vlog("game_thread started with 16MB host stack; allocating 4MB guest stack\n");
+    Ctx* c = ctx_new(4 * 1024 * 1024);
+    vlog("starting translated entry point at %06x\n", args->entry);
+    guest_call(args->entry, 0, NULL);
+    vlog("game loop exited cleanly\n");
+    args->result = 0;
+    return NULL;
+}
 
 int main(int argc, char* argv[]) {
     (void)argc; (void)argv;
+    mkdir("sdmc:/switch", 0777);
+    mkdir("sdmc:/switch/usm", 0777);
+    chdir("sdmc:/switch/usm");
+
+    vlog("=== usm_switch starting ===\n");
     romfsInit();
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&pad);
 
     g_image = memalign(0x10000, IMAGE_SIZE);
-    vlog("usm_switch started (image at %p)\n", g_image);
+    vlog("usm_switch memory allocated (image at %p)\n", g_image);
     if (!g_image) {
         fatal("Out of memory for guest image allocation.");
         return 1;
@@ -131,11 +186,23 @@ int main(int argc, char* argv[]) {
         fatal("Cannot load " USM_DIR "USM.exe\nMake sure USM.exe and the Data folder are inside sdmc:/switch/usm/");
     }
 
-    Ctx* c = ctx_new(0x100000);
-    vlog("starting translated entry point at %06x\n", entry);
-    guest_call(entry, 0, NULL);
-    vlog("game loop exited cleanly\n");
+    GameThreadArgs args = { entry, 0 };
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 16 * 1024 * 1024);
+    pthread_t thread;
+    int err = pthread_create(&thread, &attr, game_thread, &args);
+    pthread_attr_destroy(&attr);
 
+    if (err != 0) {
+        vlog("pthread_create failed (%d), falling back to main thread\n", err);
+        Ctx* c = ctx_new(4 * 1024 * 1024);
+        guest_call(entry, 0, NULL);
+    } else {
+        pthread_join(thread, NULL);
+    }
+
+    vlog("=== usm_switch ended cleanly ===\n");
     romfsExit();
     return 0;
 }

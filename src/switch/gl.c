@@ -113,6 +113,10 @@ static void init_(uint32_t bw, uint32_t bh) {
     nwindowSetDimensions(win, SWITCH_SCREEN_W, SWITCH_SCREEN_H);
 
     s_surface = eglCreateWindowSurface(s_display, config, (EGLNativeWindowType)win, NULL);
+    if (!s_surface) {
+        vlog("gl: eglCreateWindowSurface failed: 0x%x\n", eglGetError());
+        return;
+    }
     static const EGLint ctx_attribs[] = {
         EGL_CONTEXT_MAJOR_VERSION, 4,
         EGL_CONTEXT_MINOR_VERSION, 3,
@@ -120,11 +124,18 @@ static void init_(uint32_t bw, uint32_t bh) {
     };
     s_context = eglCreateContext(s_display, config, EGL_NO_CONTEXT, ctx_attribs);
     if (!s_context) {
+        vlog("gl: eglCreateContext 4.3 failed (0x%x), trying fallback\n", eglGetError());
         static const EGLint ctx_fallback[] = { EGL_NONE };
         s_context = eglCreateContext(s_display, config, EGL_NO_CONTEXT, ctx_fallback);
     }
+    if (!s_context) {
+        vlog("gl: eglCreateContext failed: 0x%x\n", eglGetError());
+        return;
+    }
     eglMakeCurrent(s_display, s_surface, s_surface, s_context);
-    gladLoadGL();
+    if (!gladLoadGLLoader((GLADloadproc)eglGetProcAddress)) {
+        gladLoadGL();
+    }
     eglSwapInterval(s_display, 1);
     options_menu_init();
     vlog("gl: Nintendo Switch OpenGL initialized: GL %s, SL %s, Renderer %s\n",
