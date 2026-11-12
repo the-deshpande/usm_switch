@@ -1,0 +1,267 @@
+/* Runtime for the translated code on Nintendo Switch (libnx / Horizon OS).
+   Provides per-thread Ctx, lookup for f_XXXXXX, host-to-guest calls, shims dispatch, and logging. */
+#define RC_GUEST_WRITER
+#include <malloc.h>
+#include <pthread.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <switch.h>
+
+#include "switch.h"
+
+uint8_t* rc_guest;
+void (*rc_on_trap)(uint32_t at);
+
+static FILE* g_log = NULL;
+static pthread_mutex_t g_log_lock = PTHREAD_MUTEX_INITIALIZER;
+
+int log_on(void) {
+    static int on = -1;
+    if (on < 0) {
+        FILE* f = fopen(USM_DIR "debug.txt", "r");
+        on = (f != NULL);
+        if (f) fclose(f);
+    }
+    return on;
+}
+
+void vlog(const char* fmt, ...) {
+    if (!log_on()) return;
+    pthread_mutex_lock(&g_log_lock);
+    if (!g_log) {
+        remove(USM_DIR "log_prev.txt");
+        rename(USM_DIR "log.txt", USM_DIR "log_prev.txt");
+        g_log = fopen(USM_DIR "log.txt", "w");
+    }
+    if (g_log) {
+        va_list ap;
+        va_start(ap, fmt);
+        vfprintf(g_log, fmt, ap);
+        va_end(ap);
+        fflush(g_log);
+    }
+    pthread_mutex_unlock(&g_log_lock);
+}
+
+void rc_log(const char* fmt, ...) {
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    vlog("%s", buf);
+}
+
+void negative_guest(uint32_t a) {
+    static int told;
+    if (!told) {
+        told = 1;
+        vlog("warning: allocation below the image (guest address %08x)\n", a);
+    }
+}
+
+uint32_t g_game_bytes = 0;
+void* game_mem(void* p) {
+    if (p) __atomic_add_fetch(&g_game_bytes, (uint32_t)malloc_usable_size(p), __ATOMIC_RELAXED);
+    return p;
+}
+
+void* game_realloc(void* p, uint32_t n) {
+    uint32_t old = p ? (uint32_t)malloc_usable_size(p) : 0;
+    void* q = realloc(p, n);
+    if (q || !n) __atomic_sub_fetch(&g_game_bytes, old, __ATOMIC_RELAXED);
+    return game_mem(q);
+}
+
+void game_free(void* p) {
+    if (p) {
+        __atomic_sub_fetch(&g_game_bytes, (uint32_t)malloc_usable_size(p), __ATOMIC_RELAXED);
+        free(p);
+    }
+}
+
+void* guest_alloc(uint32_t n) {
+    void* p = memalign(16, n);
+    if (!p) {
+        vcrash("out of memory (%u bytes)\n", n);
+        abort();
+    }
+    memset(p, 0, n);
+    GA(p);
+    return p;
+}
+
+/* ---- Contexts ---- */
+static pthread_key_t g_ctx_key;
+static pthread_once_t g_ctx_once = PTHREAD_ONCE_INIT;
+static void ctx_key(void) { pthread_key_create(&g_ctx_key, NULL); }
+
+Ctx* ctx_new(uint32_t stack_size) {
+    pthread_once(&g_ctx_once, ctx_key);
+    Ctx* c = guest_alloc(sizeof(Ctx));
+    uint8_t* stack = guest_alloc(stack_size);
+    uint8_t* teb = guest_alloc(0x1000);
+    uint8_t* peb = guest_alloc(0x1000);
+    c->esp = G(stack + stack_size - 64);
+    c->fsbase = G(teb);
+    ST32(c->fsbase + 0x00, 0xffffffffu);            /* SEH chain: empty */
+    ST32(c->fsbase + 0x04, G(stack + stack_size));  /* stack base */
+    ST32(c->fsbase + 0x08, G(stack));               /* stack limit */
+    ST32(c->fsbase + 0x18, c->fsbase);              /* self */
+    ST32(c->fsbase + 0x30, G(peb));
+    rc_fldcw(c, 0x27f);                             /* standard control word */
+    rc_tls_init(c);
+    pthread_setspecific(g_ctx_key, c);
+    return c;
+}
+
+Ctx* rc_ctx(void) {
+    pthread_once(&g_ctx_once, ctx_key);
+    Ctx* c = pthread_getspecific(g_ctx_key);
+    return c ? c : ctx_new(0x100000);
+}
+
+void vcrash(const char* fmt, ...) {
+    char buf[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    vlog("%s", buf);
+    FILE* f = fopen(USM_DIR "crash.txt", "a");
+    if (f) {
+        fprintf(f, "%s", buf);
+        fclose(f);
+    }
+}
+
+/* ---- Traps ---- */
+void rc_trap(Ctx* c, uint32_t at, const char* why) {
+    vcrash("trap at %06x: %s\n", at, why);
+    shim_log_recent(8);
+    if (rc_on_trap) rc_on_trap(at);
+    abort();
+}
+
+void rc_bad_return(Ctx* c, uint32_t at, uint32_t expected) {
+    vlog("bad return from %06x: expected %06x, got %06x\n", at, expected, c->target);
+}
+
+/* ---- Function Lookup ---- */
+static unsigned index_of(uint32_t a) {
+    unsigned lo = 0, hi = rc_count;
+    while (lo < hi) {
+        unsigned m = (lo + hi) / 2;
+        if (rc_addr[m] < a) lo = m + 1;
+        else hi = m;
+    }
+    return (lo < rc_count && rc_addr[lo] == a) ? (lo + 1) : 0;
+}
+
+static uint32_t cache_idx[8192];
+
+__attribute__((hot)) static rc_fn lookup(uint32_t a) {
+    if (a >= SHIM_BASE) return NULL;
+    unsigned h = (a >> 4 ^ a >> 17) & 8191;
+    uint32_t k = __atomic_load_n(&cache_idx[h], __ATOMIC_RELAXED);
+    if (k && rc_addr[k - 1] == a) return rc_impl[k - 1];
+    k = index_of(a);
+    if (!k) return NULL;
+    __atomic_store_n(&cache_idx[h], k, __ATOMIC_RELAXED);
+    return rc_impl[k - 1];
+}
+
+void rc_native(Ctx* c, uint32_t target) {
+    if (!shim_call(c, target)) rc_trap(c, target, "call to code that is neither translated nor a shim");
+}
+
+__attribute__((hot)) void rc_call(Ctx* c, uint32_t target, uint32_t ret) {
+    rc_fn f = lookup(target);
+    if (!f) {
+        rc_native(c, target);
+        return;
+    }
+    c->esp -= 4;
+    ST32(c->esp, ret);
+    f(c);
+}
+
+void rc_tail(Ctx* c, uint32_t target) {
+    rc_fn f = lookup(target);
+    if (f) {
+        f(c);
+        return;
+    }
+    uint32_t ra = LD32(c->esp);
+    c->esp += 4;
+    rc_native(c, target);
+    c->target = ra;
+}
+
+void rc_jmp(Ctx* c, uint32_t target, uint32_t at) {
+    (void)at;
+    rc_tail(c, target);
+}
+
+#define SENTINEL 0xfffffff0u
+
+uint32_t guest_call(uint32_t fn, int n, const uint32_t* args) {
+    Ctx* c = rc_ctx();
+    uint32_t saved[8];
+    memcpy(saved, &c->eax, sizeof saved);
+    for (int i = n - 1; i >= 0; i--) {
+        c->esp -= 4;
+        ST32(c->esp, args[i]);
+    }
+    rc_fn f = lookup(fn);
+    if (f) {
+        c->esp -= 4;
+        ST32(c->esp, SENTINEL);
+        f(c);
+    } else if (!shim_call(c, fn)) {
+        rc_trap(c, fn, "callback to code that is neither translated nor a shim");
+    }
+    uint32_t r = c->eax;
+    memcpy(&c->eax, saved, sizeof saved);
+    return r;
+}
+
+/* ---- Setjmp / Longjmp ---- */
+#define NJMP 32
+
+rc_jmprec* rc_setjmp_rec(Ctx* c, uint32_t jb) {
+    if (!c->jmp) c->jmp = guest_alloc(sizeof(rc_jmprec) * NJMP);
+    rc_jmprec* free_ = NULL;
+    for (int i = 0; i < NJMP; i++) {
+        if (c->jmp[i].jb == jb) return &c->jmp[i];
+        if (!c->jmp[i].jb && !free_) free_ = &c->jmp[i];
+    }
+    if (!free_) {
+        vcrash("too many active setjmp records (%d)\n", NJMP);
+        abort();
+    }
+    return free_;
+}
+
+void rc_longjmp(Ctx* c, uint32_t jb, int val) {
+    if (c->jmp) {
+        for (int i = 0; i < NJMP; i++) {
+            if (c->jmp[i].jb == jb) {
+                rc_jmprec* r = &c->jmp[i];
+                r->jb = 0;
+                c->eax = val ? val : 1;
+                c->esp = r->esp;
+                c->ebp = r->ebp;
+                c->ebx = r->ebx;
+                c->esi = r->esi;
+                c->edi = r->edi;
+                c->fcw = r->fcw;
+                c->target = r->target;
+                longjmp(r->env, 1);
+            }
+        }
+    }
+    rc_trap(c, jb, "longjmp without matching setjmp");
+}
