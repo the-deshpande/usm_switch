@@ -1,7 +1,7 @@
 /* USER32: there is no window on the Vita. The game gets a fake one the size of the screen and an empty message queue. */
 
 
-#include "switch.h"
+#include "usm_switch.h"
 
 #define S(i) ((char*)H(ARG(i)))
 #define HWND_MAIN 0x2000u

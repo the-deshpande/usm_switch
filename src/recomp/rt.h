@@ -69,7 +69,7 @@ static inline void rc_prof_pop(Ctx* c) { if (c->pdepth) c->pdepth--; }
 void rc_prof_start(Ctx* main_ctx);  /* rt_vita.c: the sampler thread, for the thread that runs the game loop */
 #endif
 
-#if defined(__vita__) || defined(USM_VPC)
+#if defined(__vita__) || defined(USM_VPC) || defined(__SWITCH__)
 /* the block guest memory lives in: the PC addresses can't be mapped on the Vita. Set once at startup (main.c,
    rt_vita.c define RC_GUEST_WRITER); const everywhere else, or every guest store would make gcc reload it */
 #ifdef RC_GUEST_WRITER
@@ -81,12 +81,23 @@ extern uint8_t* const rc_guest;
 #else
 #define RC_BASE 0
 #endif
+#if defined(__aarch64__)
+/* ARMv8-A natively supports unaligned memory access in hardware.
+   Omitting aligned(1) attribute prevents GCC 15 aarch64.cc ICE in aarch64_function_arg_alignment. */
+typedef uint32_t rc_u32;
+typedef uint16_t rc_u16;
+typedef uint8_t rc_u8;
+typedef float rc_f32;
+typedef double rc_f64;
+typedef uint64_t rc_u64;
+#else
 typedef uint32_t __attribute__((aligned(1), may_alias)) rc_u32;
 typedef uint16_t __attribute__((aligned(1), may_alias)) rc_u16;
 typedef uint8_t __attribute__((may_alias)) rc_u8;
 typedef float __attribute__((aligned(1), may_alias)) rc_f32;
 typedef double __attribute__((aligned(1), may_alias)) rc_f64;
 typedef uint64_t __attribute__((aligned(1), may_alias)) rc_u64;
+#endif
 #define RC_P(a) ((uintptr_t)RC_BASE + (uint32_t)(a))
 #ifdef RC_WTRACE
 /* write tracing (vpc analysis builds, src/vita/wtrace.c): while rc_wt_on, every guest store is reported, to find out

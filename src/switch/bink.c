@@ -16,11 +16,15 @@
 #include <libavutil/channel_layout.h>
 #include <libavutil/frame.h>
 
-#include "switch.h"
+#include "usm_switch.h"
 
 #define S(i) ((char*)H(ARG(i)))
 
 #include <switch.h>
+
+static inline uint64_t now_us(void) {
+    return armTicksToNs(armGetSystemTick()) / 1000ull;
+}
 
 
 
@@ -55,7 +59,7 @@ static uint32_t g_under, g_decoded;
 static uint64_t g_mt0, g_dec_us;
 #define AF_N (sizeof g_af / sizeof *g_af)
 
-static int16_t s16(float v) { v *= 32767.f; return (int16_t)(v > 32767.f ? 32767 : v < -32768.f ? -32768 : v); }
+static int16_t to_s16(float v) { v *= 32767.f; return (int16_t)(v > 32767.f ? 32767 : v < -32768.f ? -32768 : v); }
 /* one decoded audio frame into the FIFO as interleaved stereo s16 */
 static void push_audio(const AVFrame* f) {
     int ch = f->ch_layout.nb_channels, n = f->nb_samples;
@@ -65,8 +69,8 @@ static void push_audio(const AVFrame* f) {
             int c = k < ch ? k : 0;
             int16_t v = 0;
             switch (f->format) {
-            case AV_SAMPLE_FMT_FLTP: v = s16(((const float*)f->extended_data[c])[i]); break;
-            case AV_SAMPLE_FMT_FLT: v = s16(((const float*)f->extended_data[0])[i * ch + c]); break;
+            case AV_SAMPLE_FMT_FLTP: v = to_s16(((const float*)f->extended_data[c])[i]); break;
+            case AV_SAMPLE_FMT_FLT: v = to_s16(((const float*)f->extended_data[0])[i * ch + c]); break;
             case AV_SAMPLE_FMT_S16P: v = ((const int16_t*)f->extended_data[c])[i]; break;
             case AV_SAMPLE_FMT_S16: v = ((const int16_t*)f->extended_data[0])[i * ch + c]; break;
             }
@@ -112,16 +116,16 @@ static int read_frame(uint32_t k) {
         if (t == 0 && g_ac && a >= 4) decode(g_ac, g_pkt + at, a, 0);
         at += a;
     }
-    uint64_t t0 = sceKernelGetProcessTimeWide();
+    uint64_t t0 = now_us();
     decode(g_vc, g_pkt + at, n - at, 1);
-    g_dec_us += sceKernelGetProcessTimeWide() - t0, g_decoded++;
+    g_dec_us += now_us() - t0, g_decoded++;
     return 1;
 }
 static void* movie_main(void* a) {
-    uint64_t t0 = sceKernelGetProcessTimeWide();
+    uint64_t t0 = now_us();
     uint32_t next = 0;
     while (g_mrun && next < g_frames) {
-        double t = (sceKernelGetProcessTimeWide() - t0) / 1e6;
+        double t = (now_us() - t0) / 1e6;
         uint32_t due = (uint32_t)(t * g_fps_num / g_fps_den) + 1;  /* frames that should have been shown by now */
         if (next >= due) { svcSleepThread(2000 * 1000ull); continue; }
         if (!read_frame(next)) break;
@@ -131,37 +135,23 @@ static void* movie_main(void* a) {
     return NULL;
 }
 static void* audio_main(void* a) {
-    enum { GRAIN = 1024, OUT_RATE = 48000 };  /* a multiple of 64, as SceAudio wants */
-    static int16_t buf[GRAIN * 2];
-    /* the MAIN port only plays 48 kHz (80260008 at the movies' 22050; the one BGM port is the game's mixer), so the
-       movie's audio is resampled (nearest sample) on the way out */
-#ifndef USM_VPC
-    int port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_MAIN, GRAIN, OUT_RATE, SCE_AUDIO_OUT_MODE_STEREO);
-    if (port < 0) { vlog("movie: audio port failed %08x\n", port); return NULL; }
-#endif
-    double step = (double)g_arate / OUT_RATE, pos = 0;  /* source frames per output frame; the fraction carried */
+    (void)a;
+    enum { GRAIN = 1024, OUT_RATE = 48000 };
+    double step = (double)g_arate / OUT_RATE, pos = 0;
     while (g_mrun) {
-        uint32_t need = (uint32_t)(pos + GRAIN * step) + 1;  /* source frames this grain reads */
+        uint32_t need = (uint32_t)(pos + GRAIN * step) + 1;
         if ((g_aw - g_ar) / 2 >= need) {
-            for (int i = 0; i < GRAIN; i++) {
-                uint32_t s = g_ar + 2 * (uint32_t)(pos + i * step);
-                buf[2 * i] = g_af[s & (AF_N - 1)], buf[2 * i + 1] = g_af[(s + 1) & (AF_N - 1)];
-            }
             __sync_synchronize();
             double end = pos + GRAIN * step;
             uint32_t whole = (uint32_t)end;
             pos = end - whole, g_ar += 2 * whole;
-        } else if (g_mdone) break;
-        else memset(buf, 0, sizeof buf), g_under++;  /* not decoded yet: silence keeps the pace */
-#ifndef USM_VPC
-        sceAudioOutOutput(port, buf);  /* blocks for one grain */
-#else
-        sceKernelDelayThread(GRAIN * 1000000u / OUT_RATE);  /* vpc: silent */
-#endif
+        } else if (g_mdone) {
+            break;
+        } else {
+            g_under++;
+        }
+        svcSleepThread((u64)GRAIN * 1000000000ull / OUT_RATE);
     }
-#ifndef USM_VPC
-    sceAudioOutReleasePort(port);
-#endif
     return NULL;
 }
 
@@ -183,7 +173,7 @@ static void close_movie(void) {
     pthread_join(g_mthread, NULL);
     if (g_athread_on) pthread_join(g_athread, NULL), g_athread_on = 0;
     vlog("movie: %.1f s played, %u frames decoded in %.1f ms each, %u audio grains of silence\n",
-         (sceKernelGetProcessTimeWide() - g_mt0) / 1e6, g_decoded, g_decoded ? g_dec_us / 1000.0 / g_decoded : 0.0, g_under);
+         (now_us() - g_mt0) / 1e6, g_decoded, g_decoded ? g_dec_us / 1000.0 / g_decoded : 0.0, g_under);
     avcodec_free_context(&g_vc), avcodec_free_context(&g_ac), av_frame_free(&g_fr);
     for (int i = 0; i < 3; i++) free(g_ring[i]), g_ring[i] = NULL;
     free(g_index), g_index = NULL, free(g_pkt), g_pkt = NULL;
@@ -234,7 +224,7 @@ static int open_movie(const char* path) {
     }
     pthread_mutex_init(&g_mlock, NULL);
     g_mrun = 1, g_mdone = 0, g_seq = g_seen = 0, g_pub = g_busy = -1, g_aw = g_ar = g_under = g_decoded = 0, g_dec_us = 0;
-    g_mt0 = sceKernelGetProcessTimeWide();
+    g_mt0 = now_us();
     pthread_attr_t at;
     pthread_attr_init(&at);
     pthread_attr_setstacksize(&at, 512 * 1024);

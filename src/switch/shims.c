@@ -5,7 +5,7 @@
 #include <strings.h>
 #include <string.h>
 
-#include "switch.h"
+#include "usm_switch.h"
 
 #define MAX_SLOTS 8192
 

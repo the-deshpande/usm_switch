@@ -1,7 +1,7 @@
 /* COM objects the game sees (D3D9, DirectSound, DirectInput): guest memory whose first word points to a guest vtable
    of shim slots. Methods given a C function run it; the rest are survey stubs that return S_OK (0). */
 #pragma once
-#include "vita.h"
+#include "usm_switch.h"
 
 typedef struct { const char* name; int pops; } ComMethod;
 typedef struct { const char* name; const ComMethod* m; int n; } ComIface;

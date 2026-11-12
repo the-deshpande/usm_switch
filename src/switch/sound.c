@@ -81,7 +81,7 @@ static void* mixer_thread(void* arg) {
     for (;;) {
         AudioOutBuffer* released = NULL;
         u32 released_count = 0;
-        audoutWaitPlayFinish(&released, &released_count, U64_MAX);
+        audoutWaitPlayFinish(&released, &released_count, UINT64_MAX);
 
         memset(acc, 0, sizeof acc);
         pthread_mutex_lock(&g_mix);

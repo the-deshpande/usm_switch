@@ -15,7 +15,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "switch.h"
+#include "usm_switch.h"
 #include "switch_util.h"
 
 #define S(i) ((char*)H(ARG(i)))
@@ -240,7 +240,7 @@ void apc_run(Ctx* c) {
 }
 static void* io_main(void* arg) {
     (void)arg;
-    sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), 0x20000);  /* core 1: the renderer's, half idle */
+    (void)0;
     for (;;) {
         pthread_mutex_lock(&g_io_m);
         while (!g_io_head) pthread_cond_wait(&g_io_cv, &g_io_m);
@@ -338,7 +338,7 @@ static void SleepEx_(Ctx* c) {  /* (ms, alertable): WAIT_IO_COMPLETION (0xc0) if
         c->eax = 0;
         return;
     }
-    sceKernelDelayThread(ms ? (ms == 0xffffffffu ? 1000 : ms * 1000) : 100);
+    svcSleepThread((u64)(ms ? (ms == 0xffffffffu ? 1000 : ms * 1000) : 100) * 1000ull);
     c->eax = 0;
 }
 static void SwitchToThread_(Ctx* c) { svcSleepThread(0 * 1000ull); c->eax = 1; }
@@ -531,7 +531,7 @@ static void MapViewOfFile_(Ctx* c) {
 static void UnmapViewOfFile_(Ctx* c) { free(H(ARG(0))); c->eax = 1; }
 
 /* ---- time ---- */
-static uint64_t now_us(void) { return sceKernelGetProcessTimeWide(); }
+static uint64_t now_us(void) { return armTicksToNs(armGetSystemTick()) / 1000ull; }
 static void GetTickCount_(Ctx* c) { c->eax = (uint32_t)(now_us() / 1000); }
 static void QueryPerformanceCounter_(Ctx* c) { uint64_t t = now_us(); ST32(ARG(0), (uint32_t)t), ST32(ARG(0) + 4, (uint32_t)(t >> 32)); c->eax = 1; }
 static void QueryPerformanceFrequency_(Ctx* c) { ST32(ARG(0), 1000000), ST32(ARG(0) + 4, 0); c->eax = 1; }
@@ -546,11 +546,11 @@ static void GetLocalTime_(Ctx* c) {
                      (uint16_t)tm->tm_hour, (uint16_t)tm->tm_min, (uint16_t)tm->tm_sec, 0};
     memcpy(H(ARG(0)), v, 16);
 }
-static void Sleep_(Ctx* c) { sceKernelDelayThread(ARG(0) ? ARG(0) * 1000 : 100); }
+static void Sleep_(Ctx* c) { svcSleepThread((u64)(ARG(0) ? ARG(0) * 1000 : 100) * 1000ull); }
 
 /* ---- process and modules ---- */
 static void GetCurrentProcessId_(Ctx* c) { c->eax = 0x1234; }
-static void GetCurrentThreadId_(Ctx* c) { c->eax = (uint32_t)sceKernelGetThreadId(); }
+static void GetCurrentThreadId_(Ctx* c) { c->eax = (uint32_t)(uintptr_t)pthread_self(); }
 static void GetCurrentThread_(Ctx* c) { c->eax = 0xfffffffeu; }
 static void GetCurrentProcess_(Ctx* c) { c->eax = 0xffffffffu; }
 static void GetModuleHandleA_(Ctx* c) { c->eax = ARG(0) ? 0x10000000u : 0x400000u; }
@@ -621,7 +621,7 @@ static void VirtualFree_(Ctx* c) { if (ARG(2) & 0x8000) game_free(H(ARG(0))); c-
 static void VirtualQuery_(Ctx* c) {
     uint32_t a = ARG(0), m = ARG(1);
     /* committed read-write private if mapped, else free: the game's allocator (592d50) reads the page only if committed */
-    int mapped = sceKernelFindMemBlockByAddr(H(a & ~0xfffu), 0) >= 0;
+    int mapped = (a >= 0x400000 && a < 0x80000000u);
     uint32_t v[7] = {a & ~0xfffu, a & ~0xfffu, 4, 0x1000, mapped ? 0x1000 : 0x10000, mapped ? 4 : 1, 0x20000};
     memcpy(H(m), v, 28);
     c->eax = 28;
@@ -755,10 +755,7 @@ static void* thread_main(void* arg) {
     /* core 3 (streaming, sound decoding, device watch): 0 is the game loop's, 1 the renderer's, 2 the pipeline
        worker's. Core 1 if the system keeps core 3: on core 2 they kept pausing the worker mid-draw, and the renderer
        on core 1 is idle about half the frame */
-    int r3 = sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), 0x80000);
-    static int said;
-    if (!said++) vlog("game threads on core %d (core 3: %08x)\n", r3 < 0 ? 1 : 3, (unsigned)r3);
-    if (r3 < 0) sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), 0x20000);
+    (void)0;
     ctx_new(o->stack);
     jmp_buf out;
     pthread_once(&g_exit_once, exit_key);

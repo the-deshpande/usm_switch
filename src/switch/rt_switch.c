@@ -9,7 +9,7 @@
 #include <string.h>
 #include <switch.h>
 
-#include "switch.h"
+#include "usm_switch.h"
 
 uint8_t* rc_guest;
 void (*rc_on_trap)(uint32_t at);
@@ -245,23 +245,22 @@ rc_jmprec* rc_setjmp_rec(Ctx* c, uint32_t jb) {
     return free_;
 }
 
-void rc_longjmp(Ctx* c, uint32_t jb, int val) {
-    if (c->jmp) {
-        for (int i = 0; i < NJMP; i++) {
-            if (c->jmp[i].jb == jb) {
-                rc_jmprec* r = &c->jmp[i];
-                r->jb = 0;
-                c->eax = val ? val : 1;
-                c->esp = r->esp;
-                c->ebp = r->ebp;
-                c->ebx = r->ebx;
-                c->esi = r->esi;
-                c->edi = r->edi;
-                c->fcw = r->fcw;
-                c->target = r->target;
-                longjmp(r->env, 1);
-            }
-        }
+void rc_setjmp_save(Ctx* c, rc_jmprec* r) {
+    memcpy(r->regs, &c->eax, 32);
+    r->fs0 = LD32(c->fsbase);
+}
+
+int rc_longjmp(uint32_t jb, int v) {
+    Ctx* c = rc_ctx();
+    if (!c->jmp) return 0;
+    for (int i = 0; i < NJMP; i++) {
+        rc_jmprec* r = &c->jmp[i];
+        if (r->jb != jb || r->regs[4] < c->esp) continue;
+        memcpy(&c->eax, r->regs, 32);
+        c->eax = v ? (uint32_t)v : 1;
+        c->ftop = 0, c->fdepth = 0;
+        ST32(c->fsbase, r->fs0);
+        __builtin_longjmp(r->buf, 1);
     }
-    rc_trap(c, jb, "longjmp without matching setjmp");
+    return 0;
 }

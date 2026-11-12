@@ -466,7 +466,7 @@ static void cut_no_fog(void) {
 /* once per world frame, on the main thread (native.c f_73ea70): Present may run on the pipeline's worker */
 void d3d_frame_fixups(void) { cap_density(), fix_aspect(), cap_build_dist(), cut_no_fog(); }
 static void dev_Present(Ctx* c) {
-    uint64_t t = sceKernelGetProcessTimeWide();
+    uint64_t t = armTicksToNs(armGetSystemTick()) / 1000ull;
     if (!g_t0) g_t0 = g_last = t;
     extern int g_shim_verbose;
     if (g_frames == 3 && g_shim_verbose) g_shim_verbose = 0, vlog("call trace off after 3 frames\n");

@@ -9,7 +9,7 @@
 #include <sys/stat.h>
 #include <time.h>
 
-#include "switch.h"
+#include "usm_switch.h"
 #include "switch_util.h"
 
 #define S(i) ((char*)H(ARG(i)))

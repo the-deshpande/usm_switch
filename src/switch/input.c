@@ -6,7 +6,7 @@
 #include <stdlib.h>
 
 #include "com.h"
-#include "switch.h"
+#include "usm_switch.h"
 
 extern PadState pad;
 

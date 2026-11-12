@@ -19,6 +19,9 @@ if(NOT RECOMP_GEN)
     message(FATAL_ERROR "src/recomp/gen is empty: run recomp.py first")
 endif()
 
+# FFmpeg Bink decoders
+include(${CMAKE_CURRENT_SOURCE_DIR}/../vendor/ffmpeg/ffmpeg.cmake)
+
 file(GLOB SWITCH_SRC CONFIGURE_DEPENDS ${SRC}/switch/*.c)
 
 add_executable(usm_switch.elf
@@ -31,20 +34,22 @@ target_include_directories(usm_switch.elf PRIVATE
     ${SRC}/recomp
     ${SRC}/recomp/gen
     ${SRC}/switch
+    ${CMAKE_CURRENT_SOURCE_DIR}/../vendor/ffmpeg
 )
 
 # Runtime semantics matching the original x86:
 # Wrapping arithmetic, unaligned / type-punning pointers, unsigned char
 target_compile_definitions(usm_switch.elf PRIVATE RC_RELEASE __SWITCH__)
 target_compile_options(usm_switch.elf PRIVATE
-    -O2 -std=gnu11 -w
+    -O1 -std=gnu11 -w
     -fno-strict-aliasing -fwrapv -funsigned-char
     -fno-tree-vectorize -fno-tree-slp-vectorize
 )
 
 target_link_libraries(usm_switch.elf PRIVATE
+    ffbink
     -lnx
-    -lEGL -lglapi -lGL
+    -lEGL -lglapi -lglad
     -ldrm_nouveau
     -lpthread -lm
 )
@@ -60,3 +65,4 @@ nx_create_nro(usm_switch
     TARGET usm_switch.elf
     NACP usm_switch.nacp
 )
+

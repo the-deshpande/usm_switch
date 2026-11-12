@@ -1,11 +1,10 @@
 /* The small DLLs: winmm timers, the registry (a text file, see below), COM (only DxDiag, for
    the DirectX version check), shell folders and Bink (movies: bink.c).
    D3D9, DirectSound and DirectInput have their own files. */
-#include <psp2/kernel/processmgr.h>
 #include <stdlib.h>
 
-#include "vita.h"
-#include "vita_util.h"
+#include "usm_switch.h"
+#include "switch_util.h"
 
 #define S(i) ((char*)H(ARG(i)))
 
@@ -243,7 +242,7 @@ static void RegSetValueExA_(Ctx* c) {  /* (key, name, res, type, data, size) */
     c->eax = r;
 }
 
-static void timeGetTime_(Ctx* c) { c->eax = (uint32_t)(sceKernelGetProcessTimeWide() / 1000); }
+static void timeGetTime_(Ctx* c) { c->eax = (uint32_t)(armTicksToNs(armGetSystemTick()) / 1000000ull); }
 static void Zero_(Ctx* c) { c->eax = 0; }
 static void NotFound_(Ctx* c) { c->eax = 2; }                 /* ERROR_FILE_NOT_FOUND */
 static void SHGetFolderPathA_(Ctx* c) { strcpy(S(4), GAME_CWD "\\save"); c->eax = 0; }

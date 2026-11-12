@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "switch.h"
+#include "usm_switch.h"
 #include "switch_util.h"
 
 char* gstrdup(const char* s) {
@@ -88,3 +88,35 @@ void map_path(const char* game, char* out, unsigned n) {
     while (s[0] == '.' && s[1] == '/') s += 2;
     snprintf(out, n, USM_DIR "%s", s);
 }
+
+#include <unistd.h>
+#include <pthread.h>
+
+static pthread_mutex_t g_io_lock = PTHREAD_MUTEX_INITIALIZER;
+
+ssize_t pread(int fd, void* buf, size_t count, off_t offset) {
+    pthread_mutex_lock(&g_io_lock);
+    off_t cur = lseek(fd, 0, SEEK_CUR);
+    if (cur == (off_t)-1) { pthread_mutex_unlock(&g_io_lock); return -1; }
+    if (lseek(fd, offset, SEEK_SET) == (off_t)-1) { pthread_mutex_unlock(&g_io_lock); return -1; }
+    ssize_t r = read(fd, buf, count);
+    lseek(fd, cur, SEEK_SET);
+    pthread_mutex_unlock(&g_io_lock);
+    return r;
+}
+
+ssize_t pwrite(int fd, const void* buf, size_t count, off_t offset) {
+    pthread_mutex_lock(&g_io_lock);
+    off_t cur = lseek(fd, 0, SEEK_CUR);
+    if (cur == (off_t)-1) { pthread_mutex_unlock(&g_io_lock); return -1; }
+    if (lseek(fd, offset, SEEK_SET) == (off_t)-1) { pthread_mutex_unlock(&g_io_lock); return -1; }
+    ssize_t r = write(fd, buf, count);
+    lseek(fd, cur, SEEK_SET);
+    pthread_mutex_unlock(&g_io_lock);
+    return r;
+}
+
+int g_shim_verbose = 0;
+int pipe_skip_unbind(void) { return 0; }
+void pipe_fence_d3d(void) {}
+

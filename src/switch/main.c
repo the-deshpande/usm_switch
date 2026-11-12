@@ -10,11 +10,12 @@
 #include <sys/stat.h>
 #include <switch.h>
 
-#include "switch.h"
+#include "usm_switch.h"
 
 #define IMAGE_SIZE 0x5ea060u
 
 static uint8_t* g_image;
+PadState pad;
 
 void fatal(const char* msg) {
     vlog("FATAL: %s\n", msg);
