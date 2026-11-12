@@ -870,21 +870,12 @@ extern volatile long lifted_hits[];
 /* static x87 stack: the status word's TOP as the real stack would have it */
 #define FSWS(d) ((uint16_t)((rc_fsw(c) & ~0x3800) | (((c->ftop - (d)) & 7) << 11)))
 #ifdef RC_RELEASE
-/* register flow (tools/recomp/regflow.py): a direct call spills only what the callee reads, reloads what it changes */
-#define SYNC_OUT_SEL(...) (__VA_ARGS__)
-#define SYNC_IN_SEL(...) (__VA_ARGS__)
-#define SYNC_RET_SEL(...) (__VA_ARGS__)
-#ifdef RC_RETCHK /* vpc check: a register the flow says the function keeps must still match the Ctx at its ret */
-void rc_retbad(uint32_t fn, const char* reg, uint32_t local, uint32_t ctx);
-#define RC_RETSAVE uint32_t rk_eax = eax, rk_ecx = ecx, rk_edx = edx, rk_ebx = ebx, rk_ebp = ebp, rk_esi = esi, rk_edi = edi;     (void)rk_eax, (void)rk_ecx, (void)rk_edx, (void)rk_ebx, (void)rk_ebp, (void)rk_esi, (void)rk_edi
-#define RC_RETCHK(r, fn) do { if (r != rk_##r) rc_retbad(fn, #r, r, rk_##r); } while (0)
-/* (poisoning a callee's non-inputs does not work: the poison is a Ctx change nobody restores) */
-#define RC_POISON(r) ((void)0)
-#else
+#define SYNC_OUT_SEL(...) SYNC_OUT
+#define SYNC_IN_SEL(...) SYNC_IN
+#define SYNC_RET_SEL(...) SYNC_OUT
 #define RC_RETSAVE ((void)0)
 #define RC_RETCHK(r, fn) ((void)0)
 #define RC_POISON(r) ((void)0)
-#endif
 #define RC_CHECKFPU(n, at) ((void)0)
 #define RC_HIT(k) ((void)0)
 #ifdef RC_PROFILE /* the profiler's shadow call stack (rt.h) */
