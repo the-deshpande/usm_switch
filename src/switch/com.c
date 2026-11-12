@@ -32,7 +32,7 @@ uint32_t com_vtable_ext(const char* iface, const ShimDef* impl, const ShimDef* m
     while (f->name && strcmp(f->name, iface)) f++;
     if (!f->name) { vlog("unknown COM interface %s\n", iface); abort(); }
     uint32_t* vt = (uint32_t*)guest_alloc(4 * (uint32_t)f->n + 4) + 1;  /* vt[-1]: the interface name */
-    vt[-1] = G(f->name);
+    vt[-1] = G(gstrdup(f->name));
     for (int i = 0; i < f->n; i++) {
         shim_fn fn = !strcmp(f->m[i].name, "AddRef") ? AddRef_ : !strcmp(f->m[i].name, "Release") ? Release_
                    : !strcmp(f->m[i].name, "QueryInterface") ? QueryInterface_ : NULL;

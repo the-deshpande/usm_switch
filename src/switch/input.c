@@ -182,8 +182,10 @@ static void dev_SetProperty(Ctx* c) {
 
 static void dev_EnumObjects(Ctx* c) {
     uint32_t cb = ARG(1), ref = ARG(2);
+    static uint8_t* d;
+    if (!d) d = guest_alloc(64);
     for (int i = 0; i < 6; i++) {
-        uint8_t d[44] = {0};
+        memset(d, 0, 44);
         *(uint32_t*)d = 44;
         *(uint32_t*)(d + 16) = 0x01 | 0x02;
         *(uint32_t*)(d + 20) = i;

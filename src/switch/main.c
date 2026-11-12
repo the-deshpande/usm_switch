@@ -18,6 +18,7 @@
 
 static uint8_t* g_image;
 PadState pad;
+int main(int argc, char* argv[]);
 
 /* libnx user exception handler for capturing crashes and dumping registers */
 alignas(16) u8 __nx_exception_stack[0x20000];
@@ -30,15 +31,19 @@ void __libnx_exception_handler(ThreadExceptionDump* ctx) {
     }
     crashing = 1;
 
+    uintptr_t main_addr = (uintptr_t)&main;
     char buf[1024];
     snprintf(buf, sizeof(buf),
         "\n================ CRASH DUMP ================\n"
         "Exception: 0x%x, ESR: 0x%x, FAR: 0x%llx\n"
-        "PC: 0x%llx, LR: 0x%llx, SP: 0x%llx, FP: 0x%llx\n"
+        "PC: 0x%llx (main + 0x%llx)\n"
+        "LR: 0x%llx (main + 0x%llx)\n"
+        "SP: 0x%llx, FP: 0x%llx\n"
         "X0: 0x%llx, X1: 0x%llx, X2: 0x%llx, X3: 0x%llx\n"
         "============================================\n",
         ctx->error_desc, ctx->esr, (unsigned long long)ctx->far.x,
-        (unsigned long long)ctx->pc.x, (unsigned long long)ctx->lr.x,
+        (unsigned long long)ctx->pc.x, (unsigned long long)(ctx->pc.x - main_addr),
+        (unsigned long long)ctx->lr.x, (unsigned long long)(ctx->lr.x - main_addr),
         (unsigned long long)ctx->sp.x, (unsigned long long)ctx->fp.x,
         (unsigned long long)ctx->cpu_gprs[0].x, (unsigned long long)ctx->cpu_gprs[1].x,
         (unsigned long long)ctx->cpu_gprs[2].x, (unsigned long long)ctx->cpu_gprs[3].x
@@ -176,7 +181,7 @@ int main(int argc, char* argv[]) {
     padInitializeDefault(&pad);
 
     g_image = memalign(0x10000, IMAGE_SIZE);
-    vlog("usm_switch memory allocated (image at %p)\n", g_image);
+    vlog("usm_switch memory allocated (image at %p, main at %p)\n", g_image, (void*)&main);
     if (!g_image) {
         fatal("Out of memory for guest image allocation.");
         return 1;
