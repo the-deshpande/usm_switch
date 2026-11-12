@@ -1163,6 +1163,19 @@ enum { C_INIT, C_PATCH, C_CLEAR, C_UPLOAD, C_BUFFER, C_DRAW, C_FREE, C_PRESENT }
 typedef struct {
     uint32_t type, size;  /* size: of the payload that follows, 8-aligned */
 } CmdHead;
+
+typedef struct {
+    Res* r;
+    uint32_t level;
+    uint32_t pad;
+} CmdUpload;
+
+typedef struct {
+    Res* b;
+    GLenum target;
+    uint32_t pad;
+} CmdBuffer;
+
 typedef struct {
     uint8_t* p;
     uint32_t n, cap;
@@ -1200,8 +1213,16 @@ __attribute__((hot)) static void run(Arena* a) {
             clear_(c[0], c[5] ? (const int32_t*)(c + 6) : NULL, c[1], c[2], z, c[4]);
             break;
         }
-        case C_UPLOAD: upload_(*(Res**)q, ((uint32_t*)q)[1], q + 8); break;
-        case C_BUFFER: buffer_(*(Res**)q, ((uint32_t*)q)[1], q + 8); break;
+        case C_UPLOAD: {
+            const CmdUpload* u = (const CmdUpload*)q;
+            upload_(u->r, u->level, (const uint8_t*)(u + 1));
+            break;
+        }
+        case C_BUFFER: {
+            const CmdBuffer* cb = (const CmdBuffer*)q;
+            buffer_(cb->b, cb->target, (const uint8_t*)(cb + 1));
+            break;
+        }
         case C_DRAW: draw_((const DrawCmd*)q); break;
         case C_FREE: free_(*(Res**)q); break;
         case C_PRESENT: present_(); break;
@@ -1437,9 +1458,11 @@ static void upload_level(Res* r, uint32_t b) {
     uint64_t t = now_us();
     uint32_t n = pitch_of(r->fmt, w ? w : 1) * rows_of(r->fmt, h ? h : 1);
     r->base = b;
-    Res** q = push(C_UPLOAD, 8 + n);
-    q[0] = r, ((uint32_t*)q)[1] = b;
-    memcpy((uint8_t*)q + 8, r->bits[b], n);
+    CmdUpload* u = (CmdUpload*)push(C_UPLOAD, (uint32_t)sizeof(CmdUpload) + n);
+    u->r = r;
+    u->level = b;
+    u->pad = 0;
+    memcpy((uint8_t*)(u + 1), r->bits[b], n);
     r->sent = 1;
     g_uploads++, g_upload_us += now_us() - t;
 }
@@ -1447,7 +1470,7 @@ void gl_upload(Res* r, uint32_t level) {
     if (r->cube || level >= 16 || !r->bits[level]) return;
     if (level == base_of(r)) upload_level(r, level);
 }
-void gl_free(Res* r) { *(Res**)push(C_FREE, 8) = r; }
+void gl_free(Res* r) { *(Res**)push(C_FREE, sizeof(Res*)) = r; }
 uint32_t gl_mem_free_mb(int ram) {
     (void)ram;
     u64 total = 0, used = 0;
@@ -1460,9 +1483,11 @@ uint32_t gl_mem_free_mb(int ram) {
 
 static void send_buffer(Res* b, GLenum target) {
     if (b->sent) return;
-    Res** q = push(C_BUFFER, 8 + b->size);
-    q[0] = b, ((uint32_t*)q)[1] = target;
-    memcpy((uint8_t*)q + 8, b->bits[0], b->size);
+    CmdBuffer* cb = (CmdBuffer*)push(C_BUFFER, (uint32_t)sizeof(CmdBuffer) + b->size);
+    cb->b = b;
+    cb->target = target;
+    cb->pad = 0;
+    memcpy((uint8_t*)(cb + 1), b->bits[0], b->size);
     b->sent = 1, g_buf_uploads++, g_buf_bytes += b->size;
 }
 static int is_static(Res* b) { return b && b->bits[0] && !(b->usage & 0x200); }

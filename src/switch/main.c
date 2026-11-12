@@ -50,7 +50,8 @@ void __libnx_exception_handler(ThreadExceptionDump* ctx) {
         fflush(f);
         fclose(f);
     }
-    svcReturnFromException(0xF801);
+    svcSleepThread(500000000ULL);
+    svcExitProcess();
 }
 
 void fatal(const char* msg) {
