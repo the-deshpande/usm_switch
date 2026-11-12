@@ -31,7 +31,7 @@ static MenuRow s_graphics_rows[] = {
     {"View distance", 2, 6, {"80 m", "100 m", "120 m (Default)", "150 m", "200 m", "Max (Far City)"}, "City view distance before fog"},
     {"Far city fog", 1, 2, {"Off", "On"}, "Show distance fog over Manhattan"},
     {"Particle detail", 1, 3, {"Low", "Medium (Default)", "High"}, "Smoke, fire, and explosion effects"},
-    {"Resolution mode", 0, 2, {"Native 720p", "Enhanced 1080p"}, "Internal rendering target resolution"}
+    {"Resolution mode", 0, 2, {"720p Display (960x544 base)", "1080p Enhanced (WIP)"}, "Internal rendering target resolution"}
 };
 
 static MenuRow s_controls_rows[] = {

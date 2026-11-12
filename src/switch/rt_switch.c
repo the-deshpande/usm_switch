@@ -2,6 +2,7 @@
    Provides per-thread Ctx, lookup for f_XXXXXX, host-to-guest calls, shims dispatch, and logging. */
 #define RC_GUEST_WRITER
 #include <malloc.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -159,9 +160,57 @@ static unsigned index_of(uint32_t a) {
     return (lo < rc_count && rc_addr[lo] == a) ? (lo + 1) : 0;
 }
 
+/* 0x597290: Options menu slider update callback (omitted from Ghidra CFG export) */
+static void fn_597290(Ctx* restrict c) {
+    uint32_t esp = c->esp;
+    /* On entry from rc_call, c->esp points to return address */
+    uint32_t arg0 = LD32(esp + 4);
+    uint32_t arg2 = LD32(esp + 12);
+
+    float pos = LDF32(arg0 + 0x88);
+    int32_t count = (int32_t)LD32(arg2 + 0x98);
+    int32_t val = (int32_t)floor((double)count * (double)pos + 0.5);
+
+    vlog("fn_597290: slider widget %08x pos=%.3f count=%d -> val=%d (setting %08x)\n",
+         arg0, pos, count, val, arg2);
+
+    if (val >= 0 && val < count) {
+        ST32(arg2 + 0x94, (uint32_t)val);
+        c->eax = (uint32_t)val;
+        c->ecx = arg2;
+        uint32_t vtbl = LD32(arg2);
+        uint32_t target = LD32(vtbl + 4);
+        rc_tail(c, target);
+        return;
+    }
+    c->eax = (uint32_t)val;
+    c->esp += 4; /* pop return address */
+}
+
+/* 0x5972f0: Attaches slider callback to menu option object */
+static void fn_5972f0(Ctx* restrict c) {
+    uint32_t esp = c->esp;
+    uint32_t arg0 = LD32(esp + 4);
+    uint32_t this_obj = c->ecx;
+
+    ST32(this_obj + 0x408, arg0);
+    ST32(arg0 + 0x48, 0x597290u);
+    ST32(arg0 + 0x4c, this_obj);
+
+    uint32_t vtbl = LD32(this_obj);
+    uint32_t target = LD32(vtbl + 4);
+
+    c->ecx = this_obj;
+    rc_call(c, target, 0x597309u);
+
+    c->esp += 8; /* ret 4: pop ret_addr + 4-byte arg */
+}
+
 static uint32_t cache_idx[8192];
 
 __attribute__((hot)) static rc_fn lookup(uint32_t a) {
+    if (a == 0x597290u) return fn_597290;
+    if (a == 0x5972f0u) return fn_5972f0;
     if (a >= SHIM_BASE) return NULL;
     unsigned h = (a >> 4 ^ a >> 17) & 8191;
     uint32_t k = __atomic_load_n(&cache_idx[h], __ATOMIC_RELAXED);
@@ -177,6 +226,14 @@ void rc_native(Ctx* c, uint32_t target) {
         rc_jmprec* rec_ = rc_setjmp_rec(c, LD32(c->esp));
         rc_setjmp_save(c, rec_);
         c->eax = 0;
+        return;
+    }
+    if (target == 0x597290u) {
+        fn_597290(c);
+        return;
+    }
+    if (target == 0x5972f0u) {
+        fn_5972f0(c);
         return;
     }
     if (!shim_call(c, target)) rc_trap(c, target, "call to code that is neither translated nor a shim");
