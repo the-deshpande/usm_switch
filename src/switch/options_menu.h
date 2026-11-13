@@ -26,6 +26,16 @@ int options_get_cam_invert_x(void);
 int options_get_cam_invert_y(void);
 float options_get_sensitivity(void);
 
+/* Graphics post-processing and frame generation */
+int options_get_frame_gen(void);
+int options_get_fxaa(void);
+int options_get_sharpen(void);
+void options_record_real_frame(void);
+void options_record_gen_frame(void);
+float options_get_real_fps(void);
+float options_get_gen_fps(void);
+float options_get_total_fps(void);
+
 #ifdef __cplusplus
 }
 #endif

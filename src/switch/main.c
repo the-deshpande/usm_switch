@@ -210,7 +210,10 @@ int main(int argc, char* argv[]) {
     }
 
     vlog("=== usm_switch ended cleanly ===\n");
+    void reg_flush(void);
+    reg_flush();
     options_menu_cleanup();
     romfsExit();
+    svcExitProcess();
     return 0;
 }

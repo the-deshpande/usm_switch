@@ -620,8 +620,10 @@ static void GetProcAddress_(Ctx* c) {
 static void OutputDebugStringA_(Ctx* c) { vlog("[debug] %s", S(0)); }
 static void ExitProcess_(Ctx* c) {
     vlog("ExitProcess(%d) called: exiting NRO cleanly to Horizon OS\n", (int)ARG(0));
+    void reg_flush(void);
+    reg_flush();
     options_menu_cleanup();
-    exit((int)ARG(0));
+    svcExitProcess();
 }
 
 /* ---- memory ---- */
@@ -790,7 +792,13 @@ static void* thread_main(void* arg) {
 static void ExitThread_(Ctx* c) {
     pthread_once(&g_exit_once, exit_key);
     jmp_buf* out = pthread_getspecific(g_exit_key);
-    if (!out) { vlog("ExitThread on the main thread\n"); exit((int)ARG(0)); }
+    if (!out) {
+        vlog("ExitThread on the main thread: exiting cleanly to Horizon OS\n");
+        void reg_flush(void);
+        reg_flush();
+        options_menu_cleanup();
+        svcExitProcess();
+    }
     longjmp(*out, 1);
 }
 static void CreateThread_(Ctx* c) {

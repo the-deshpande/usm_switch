@@ -11,6 +11,8 @@
 
 #include "usm_switch.h"
 #include "switch_util.h"
+#include "options_menu.h"
+#include <switch.h>
 
 #define S(i) ((char*)H(ARG(i)))
 
@@ -54,11 +56,10 @@ static void __getmainargs(Ctx* c) {
 }
 
 static void exit_(Ctx* c) {
-    vlog("exit(%d)\n", (int)ARG(0));
+    vlog("exit(%d) called: exiting cleanly to Horizon OS\n", (int)ARG(0));
     crt_run_onexit();
-    /* not libc's exit(): its teardown runs with the game's and our threads still alive, some blocked on what it needs
-       (Quit -> Yes hung here on the Vita, GitHub issue 6) */
-    exit((int)ARG(0));
+    options_menu_cleanup();
+    svcExitProcess();
 }
 
 /* ---- strings ---- */
@@ -279,7 +280,7 @@ static void fatal_(Ctx* c, const char* what) {
 static void _purecall_(Ctx* c) { fatal_(c, "pure virtual function call"); }
 static void _CxxThrowException_(Ctx* c) { fatal_(c, "C++ exception thrown (never seen on the PC)"); }
 static void terminate_(Ctx* c) { fatal_(c, "std::terminate"); }
-static void _amsg_exit_(Ctx* c) { vlog("_amsg_exit(%d)\n", (int)ARG(0)); exit(255); }
+static void _amsg_exit_(Ctx* c) { vlog("_amsg_exit(%d)\n", (int)ARG(0)); options_menu_cleanup(); svcExitProcess(); }
 static void __security_error_handler_(Ctx* c) { fatal_(c, "/GS buffer overrun check failed (a shim popped the wrong stack size?)"); }
 
 /* sscanf for the game: results go to guest pointers. %d %i %u %x %o %c %s %[..] %f %e %g %n, with *, width, h/l. */

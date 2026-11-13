@@ -31,7 +31,9 @@ static MenuRow s_graphics_rows[] = {
     {"View distance", 2, 6, {"80 m", "100 m", "120 m (Default)", "150 m", "200 m", "Max (Far City)"}, "City view distance before fog"},
     {"Far city fog", 1, 2, {"Off", "On"}, "Show distance fog over Manhattan"},
     {"Particle detail", 1, 3, {"Low", "Medium (Default)", "High"}, "Smoke, fire, and explosion effects"},
-    {"Resolution mode", 0, 4, {"Native 720p (1280x720) [Crisp]", "1080p Docked (1920x1080)", "Performance 544p (960x544)", "Low 480p (640x480)"}, "Internal 3D rendering resolution"}
+    {"Resolution mode", 0, 4, {"Native 720p (1280x720) [Crisp]", "1080p Docked (1920x1080)", "Performance 544p (960x544)", "Low 480p (640x480)"}, "Internal 3D rendering resolution"},
+    {"Anti-Aliasing (FXAA)", 0, 4, {"Off", "Low (Light)", "Medium (Smooth)", "High (Ultra Smooth)"}, "Removes pixelated edges and jaggies from character and city"},
+    {"Rescaling / Sharpening", 0, 4, {"Bilinear", "Bicubic Sharp", "FSR 1.0 (EASU+RCAS)", "FSR Ultra Sharp"}, "Adaptive contrast sharpening & image reconstruction"}
 };
 
 static MenuRow s_controls_rows[] = {
@@ -54,9 +56,10 @@ static MenuRow s_controls_rows[] = {
 };
 
 static MenuRow s_perf_rows[] = {
-    {"Frame rate cap", 1, 3, {"20 FPS", "30 FPS (Stock)", "60 FPS (Fast)"}, "Target game update rate"},
-    {"Display sync (VSync)", 1, 2, {"Off", "On (Double-buffered)"}, "Synchronize frame presentation"},
-    {"FPS Counter", 0, 2, {"Hidden", "Visible"}, "On-screen frame rate overlay"},
+    {"Framerate Target", 0, 3, {"30 FPS (Native)", "60 FPS (Frame Gen)", "Uncapped"}, "Target display presentation rate"},
+    {"Frame Generation", 0, 3, {"Off", "60 FPS AI Interpolation", "Dynamic Adaptive Gen"}, "Synthesize intermediate frames between game ticks without CPU overhead"},
+    {"Display sync (VSync)", 1, 2, {"Off", "On (Double-buffered)"}, "Synchronize frame presentation to display refresh"},
+    {"FPS Counter", 0, 3, {"Hidden", "Visible (Simple)", "Visible (Detailed FG)"}, "On-screen frame rate overlay showing Real + Generated FPS"},
     {"GPU Performance Profile", 0, 3, {"Stock (307 MHz)", "Boost (384 MHz)", "High (460 MHz)"}, "Official Nintendo GPU clock profile"},
     {"CPU Overclock", 0, 4, {"Stock (1020 MHz)", "Boost (1224 MHz)", "High (1581 MHz)", "Max (1785 MHz)"}, "CPU clock speed (clkrst)"},
     {"Pedestrian & Traffic", 2, 5, {"None", "Very Low", "Medium (Default)", "High", "Full (PC)"}, "City traffic and pedestrians density"}
@@ -69,7 +72,8 @@ static MenuRow s_qol_rows[] = {
 
 static MenuRow s_system_rows[] = {
     {"Save settings to SD", 0, 1, {"[ Press A to Save ]"}, "Save current options to settings.ini"},
-    {"Reset to player defaults", 0, 1, {"[ Press A to Reset ]"}, "Restore original factory defaults"}
+    {"Reset to player defaults", 0, 1, {"[ Press A to Reset ]"}, "Restore original factory defaults"},
+    {"Quit Game", 0, 1, {"[ Press A to Exit to Home ]"}, "Cleanly restore clocks and exit to Horizon OS"}
 };
 
 static MenuRow s_debug_rows[] = {
@@ -99,7 +103,7 @@ void options_menu_toggle(void) { g_open = !g_open; }
 
 float options_get_density(void) {
     static const float d[] = {0.0f, 0.2f, 0.5f, 0.8f, 1.0f};
-    int idx = s_perf_rows[5].cur;
+    int idx = s_perf_rows[6].cur;
     if (idx < 0 || idx >= 5) idx = 2;
     return d[idx];
 }
@@ -169,14 +173,26 @@ int options_get_fps_cap(void) {
     return c[idx];
 }
 
+int options_get_frame_gen(void) {
+    return s_perf_rows[1].cur;
+}
+
 int options_get_vsync(void) {
-    int idx = s_perf_rows[1].cur;
+    int idx = s_perf_rows[2].cur;
     return (idx == 1);
 }
 
 int options_show_fps(void) {
-    int idx = s_perf_rows[2].cur;
-    return (idx == 1);
+    int idx = s_perf_rows[3].cur;
+    return (idx > 0);
+}
+
+int options_get_fxaa(void) {
+    return s_graphics_rows[4].cur;
+}
+
+int options_get_sharpen(void) {
+    return s_graphics_rows[5].cur;
 }
 
 int options_get_wireframe(void) {
@@ -206,11 +222,36 @@ int options_get_swap_ab(void) {
     return (idx == 1);
 }
 
+/* Frame statistics tracking */
+static uint64_t s_last_fps_calc = 0;
+static float s_calc_total_fps = 30.0f;
+static float s_calc_real_fps = 30.0f;
+static float s_calc_gen_fps = 0.0f;
+static int s_total_frames = 0;
+static int s_real_frames = 0;
+static int s_gen_frames = 0;
+
+void options_record_real_frame(void) {
+    s_total_frames++;
+    s_real_frames++;
+}
+
+void options_record_gen_frame(void) {
+    s_total_frames++;
+    s_gen_frames++;
+}
+
+float options_get_real_fps(void) { return s_calc_real_fps; }
+float options_get_gen_fps(void) { return s_calc_gen_fps; }
+float options_get_total_fps(void) { return s_calc_total_fps; }
+
 static void reset_defaults(void) {
     s_graphics_rows[0].cur = 2; /* 120 m (Default) */
     s_graphics_rows[1].cur = 1; /* On */
     s_graphics_rows[2].cur = 1; /* Medium (Default) */
     s_graphics_rows[3].cur = 0; /* Native 720p */
+    s_graphics_rows[4].cur = 0; /* FXAA Off */
+    s_graphics_rows[5].cur = 0; /* Bilinear */
 
     s_controls_rows[0].cur = 0; /* Normal */
     s_controls_rows[1].cur = 0; /* Normal */
@@ -218,18 +259,20 @@ static void reset_defaults(void) {
     s_controls_rows[3].cur = 1; /* On */
     s_controls_rows[4].cur = 0; /* Off (B: Jump, A: Action) */
 
-    s_perf_rows[0].cur = 1; /* 30 FPS (Stock) */
-    s_perf_rows[1].cur = 1; /* On (Double-buffered) */
-    s_perf_rows[2].cur = 0; /* Hidden */
-    s_perf_rows[3].cur = 0; /* Stock (307 MHz) */
-    s_perf_rows[4].cur = 0; /* Stock (1020 MHz) */
-    s_perf_rows[5].cur = 2; /* Medium (Default) */
+    s_perf_rows[0].cur = 0; /* 30 FPS */
+    s_perf_rows[1].cur = 0; /* Frame Gen Off */
+    s_perf_rows[2].cur = 1; /* On (Double-buffered) */
+    s_perf_rows[3].cur = 0; /* Hidden */
+    s_perf_rows[4].cur = 0; /* Stock (307 MHz) */
+    s_perf_rows[5].cur = 0; /* Stock (1020 MHz) */
+    s_perf_rows[6].cur = 2; /* Medium (Default) */
 
     s_qol_rows[0].cur = 0; /* Off */
     s_qol_rows[1].cur = 0; /* Off */
 
     s_system_rows[0].cur = 0;
     s_system_rows[1].cur = 0;
+    s_system_rows[2].cur = 0;
 
     s_debug_rows[0].cur = 0; /* Off */
     s_debug_rows[1].cur = 0; /* Off */
@@ -249,12 +292,13 @@ static void save_settings(void) {
     }
     FILE* f = fopen(USM_DIR "settings.ini", "w");
     if (!f) return;
-    fprintf(f, "[graphics]\nview_dist=%d\nfog=%d\nparticles=%d\nres=%d\n\n",
-            s_graphics_rows[0].cur, s_graphics_rows[1].cur, s_graphics_rows[2].cur, s_graphics_rows[3].cur);
+    fprintf(f, "[graphics]\nview_dist=%d\nfog=%d\nparticles=%d\nres=%d\nfxaa=%d\nsharpen=%d\n\n",
+            s_graphics_rows[0].cur, s_graphics_rows[1].cur, s_graphics_rows[2].cur, s_graphics_rows[3].cur,
+            s_graphics_rows[4].cur, s_graphics_rows[5].cur);
     fprintf(f, "[controls]\ninvert_x=%d\ninvert_y=%d\nsens=%d\nrumble=%d\nswap_ab=%d\n\n",
             s_controls_rows[0].cur, s_controls_rows[1].cur, s_controls_rows[2].cur, s_controls_rows[3].cur, s_controls_rows[4].cur);
-    fprintf(f, "[performance]\nfps_cap=%d\nvsync=%d\nshow_fps=%d\ngpu_profile=%d\ncpu_clock=%d\ndensity=%d\n\n",
-            s_perf_rows[0].cur, s_perf_rows[1].cur, s_perf_rows[2].cur, s_perf_rows[3].cur, s_perf_rows[4].cur, s_perf_rows[5].cur);
+    fprintf(f, "[performance]\nfps_cap=%d\nframe_gen=%d\nvsync=%d\nshow_fps=%d\ngpu_profile=%d\ncpu_clock=%d\ndensity=%d\n\n",
+            s_perf_rows[0].cur, s_perf_rows[1].cur, s_perf_rows[2].cur, s_perf_rows[3].cur, s_perf_rows[4].cur, s_perf_rows[5].cur, s_perf_rows[6].cur);
     fprintf(f, "[qol]\nskip_intro=%d\nfast_map=%d\n\n",
             s_qol_rows[0].cur, s_qol_rows[1].cur);
     fprintf(f, "[debug]\nwireframe=%d\nlog=%d\n",
@@ -277,6 +321,10 @@ static void load_settings(void) {
             if (v >= 0 && v < s_graphics_rows[2].num_opts) s_graphics_rows[2].cur = v;
         } else if (sscanf(line, "res=%d", &v) == 1) {
             if (v >= 0 && v < s_graphics_rows[3].num_opts) s_graphics_rows[3].cur = v;
+        } else if (sscanf(line, "fxaa=%d", &v) == 1) {
+            if (v >= 0 && v < s_graphics_rows[4].num_opts) s_graphics_rows[4].cur = v;
+        } else if (sscanf(line, "sharpen=%d", &v) == 1) {
+            if (v >= 0 && v < s_graphics_rows[5].num_opts) s_graphics_rows[5].cur = v;
         } else if (sscanf(line, "invert_x=%d", &v) == 1) {
             if (v >= 0 && v < s_controls_rows[0].num_opts) s_controls_rows[0].cur = v;
         } else if (sscanf(line, "invert_y=%d", &v) == 1) {
@@ -289,16 +337,18 @@ static void load_settings(void) {
             if (v >= 0 && v < s_controls_rows[4].num_opts) s_controls_rows[4].cur = v;
         } else if (sscanf(line, "fps_cap=%d", &v) == 1) {
             if (v >= 0 && v < s_perf_rows[0].num_opts) s_perf_rows[0].cur = v;
-        } else if (sscanf(line, "vsync=%d", &v) == 1) {
+        } else if (sscanf(line, "frame_gen=%d", &v) == 1) {
             if (v >= 0 && v < s_perf_rows[1].num_opts) s_perf_rows[1].cur = v;
-        } else if (sscanf(line, "show_fps=%d", &v) == 1) {
+        } else if (sscanf(line, "vsync=%d", &v) == 1) {
             if (v >= 0 && v < s_perf_rows[2].num_opts) s_perf_rows[2].cur = v;
-        } else if (sscanf(line, "gpu_profile=%d", &v) == 1) {
+        } else if (sscanf(line, "show_fps=%d", &v) == 1) {
             if (v >= 0 && v < s_perf_rows[3].num_opts) s_perf_rows[3].cur = v;
-        } else if (sscanf(line, "cpu_clock=%d", &v) == 1) {
+        } else if (sscanf(line, "gpu_profile=%d", &v) == 1) {
             if (v >= 0 && v < s_perf_rows[4].num_opts) s_perf_rows[4].cur = v;
-        } else if (sscanf(line, "density=%d", &v) == 1) {
+        } else if (sscanf(line, "cpu_clock=%d", &v) == 1) {
             if (v >= 0 && v < s_perf_rows[5].num_opts) s_perf_rows[5].cur = v;
+        } else if (sscanf(line, "density=%d", &v) == 1) {
+            if (v >= 0 && v < s_perf_rows[6].num_opts) s_perf_rows[6].cur = v;
         } else if (sscanf(line, "skip_intro=%d", &v) == 1) {
             if (v >= 0 && v < s_qol_rows[0].num_opts) s_qol_rows[0].cur = v;
         } else if (sscanf(line, "fast_map=%d", &v) == 1) {
@@ -317,8 +367,8 @@ static void init_gui_gl(void);
 void options_menu_init(void) {
     reset_defaults();
     load_settings();
-    options_apply_gpu_profile(s_perf_rows[3].cur);
-    options_apply_cpu_clock(s_perf_rows[4].cur);
+    options_apply_gpu_profile(s_perf_rows[4].cur);
+    options_apply_cpu_clock(s_perf_rows[5].cur);
     init_gui_gl();
 }
 
@@ -354,8 +404,8 @@ void options_menu_update(uint64_t kDown, uint64_t kHeld, int32_t lx, int32_t ly)
     if (kDown & (HidNpadButton_Left | HidNpadButton_StickLLeft)) {
         if (r->num_opts > 1) {
             r->cur = (r->cur + r->num_opts - 1) % r->num_opts;
-            if (g_tab == TAB_PERF && g_row == 3) options_apply_gpu_profile(r->cur);
-            if (g_tab == TAB_PERF && g_row == 4) options_apply_cpu_clock(r->cur);
+            if (g_tab == TAB_PERF && g_row == 4) options_apply_gpu_profile(r->cur);
+            if (g_tab == TAB_PERF && g_row == 5) options_apply_cpu_clock(r->cur);
         }
     }
     if (kDown & (HidNpadButton_Right | HidNpadButton_StickLRight | HidNpadButton_A)) {
@@ -366,14 +416,18 @@ void options_menu_update(uint64_t kDown, uint64_t kHeld, int32_t lx, int32_t ly)
         } else if (g_tab == TAB_SYSTEM && g_row == 1) {
             remove(USM_DIR "settings.ini");
             reset_defaults();
-            options_apply_gpu_profile(s_perf_rows[3].cur);
-            options_apply_cpu_clock(s_perf_rows[4].cur);
+            options_apply_gpu_profile(s_perf_rows[4].cur);
+            options_apply_cpu_clock(s_perf_rows[5].cur);
             s_status_msg = "Player defaults restored";
             s_status_timer = 120;
+        } else if (g_tab == TAB_SYSTEM && g_row == 2) {
+            vlog("options_menu: Quit Game confirmed by user -> exiting to Horizon OS\n");
+            options_menu_cleanup();
+            svcExitProcess();
         } else if (r->num_opts > 1) {
             r->cur = (r->cur + 1) % r->num_opts;
-            if (g_tab == TAB_PERF && g_row == 3) options_apply_gpu_profile(r->cur);
-            if (g_tab == TAB_PERF && g_row == 4) options_apply_cpu_clock(r->cur);
+            if (g_tab == TAB_PERF && g_row == 4) options_apply_gpu_profile(r->cur);
+            if (g_tab == TAB_PERF && g_row == 5) options_apply_cpu_clock(r->cur);
         }
     }
 }
@@ -481,17 +535,7 @@ static void init_gui_gl(void) {
     s_prog = glCreateProgram();
     glAttachShader(s_prog, v);
     glAttachShader(s_prog, f);
-    glBindAttribLocation(s_prog, 0, "a_pos");
-    glBindAttribLocation(s_prog, 1, "a_uv");
-    glBindAttribLocation(s_prog, 2, "a_col");
     glLinkProgram(s_prog);
-    GLint linked = 0;
-    glGetProgramiv(s_prog, GL_LINK_STATUS, &linked);
-    if (!linked) {
-        char buf[512];
-        glGetProgramInfoLog(s_prog, sizeof buf, NULL, buf);
-        vlog("options_menu: program link failed: %s\n", buf);
-    }
     glDeleteShader(v);
     glDeleteShader(f);
 
@@ -503,6 +547,8 @@ static void init_gui_gl(void) {
     glBindVertexArray(s_vao);
     glGenBuffers(1, &s_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof s_verts, NULL, GL_DYNAMIC_DRAW);
+
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(MenuVert), (void*)offsetof(MenuVert, x));
     glEnableVertexAttribArray(1);
@@ -510,50 +556,51 @@ static void init_gui_gl(void) {
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(MenuVert), (void*)offsetof(MenuVert, r));
 
-    /* Restore main VAO */
-    gl_bind_main_vao();
+    glBindVertexArray(0);
 }
 
 static void flush_verts(int mode) {
     if (s_vert_count == 0) return;
     glUniform1i(s_u_mode, mode);
-    glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
-    glBufferData(GL_ARRAY_BUFFER, s_vert_count * sizeof(MenuVert), s_verts, GL_DYNAMIC_DRAW);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, s_vert_count * sizeof(MenuVert), s_verts);
     glDrawArrays(GL_TRIANGLES, 0, s_vert_count);
     s_vert_count = 0;
 }
 
-static void push_quad(float x, float y, float w, float h, float u0, float v0, float u1, float v1,
-                      float r, float g, float b, float a) {
+static void add_quad(float x0, float y0, float x1, float y1,
+                     float u0, float v0, float u1, float v1,
+                     float r, float g, float b, float a) {
     if (s_vert_count + 6 > 4096) return;
     MenuVert* v = &s_verts[s_vert_count];
-    v[0] = (MenuVert){x, y, u0, v0, r, g, b, a};
-    v[1] = (MenuVert){x + w, y, u1, v0, r, g, b, a};
-    v[2] = (MenuVert){x + w, y + h, u1, v1, r, g, b, a};
-
-    v[3] = (MenuVert){x, y, u0, v0, r, g, b, a};
-    v[4] = (MenuVert){x + w, y + h, u1, v1, r, g, b, a};
-    v[5] = (MenuVert){x, y + h, u0, v1, r, g, b, a};
+    v[0] = (MenuVert){x0, y0, u0, v0, r, g, b, a};
+    v[1] = (MenuVert){x1, y0, u1, v0, r, g, b, a};
+    v[2] = (MenuVert){x0, y1, u0, v1, r, g, b, a};
+    v[3] = (MenuVert){x1, y0, u1, v0, r, g, b, a};
+    v[4] = (MenuVert){x1, y1, u1, v1, r, g, b, a};
+    v[5] = (MenuVert){x0, y1, u0, v1, r, g, b, a};
     s_vert_count += 6;
 }
 
 static void draw_rect(float x, float y, float w, float h, float r, float g, float b, float a) {
-    push_quad(x, y, w, h, 0, 0, 0, 0, r, g, b, a);
+    add_quad(x, y, x + w, y + h, 0, 0, 1, 1, r, g, b, a);
 }
 
-static float draw_text(float x, float y, float scale, const char* str, float r, float g, float b, float a) {
+static void draw_text(float x, float y, float scale, const char* str, float r, float g, float b, float a) {
+    if (!str) return;
     float cur_x = x;
-    for (const char* p = str; *p; p++) {
-        unsigned char c = (unsigned char)*p;
-        if (c < 32 || c > 126) continue;
+    while (*str) {
+        unsigned char c = (unsigned char)*str++;
+        if (c < 32 || c > 126) c = 32;
         int idx = c - 32;
-        int cw = menu_font_w[idx];
-        float gw = cw * scale;
-        float gh = MENU_FONT_H * scale;
-        push_quad(cur_x, y, gw, gh, s_char_u0[idx], s_char_v0[idx], s_char_u1[idx], s_char_v1[idx], r, g, b, a);
-        cur_x += gw + 2.0f * scale;
+        int w = menu_font_w[idx];
+        float gw = (float)w * scale;
+        float gh = (float)MENU_FONT_H * scale;
+
+        add_quad(cur_x, y, cur_x + gw, y + gh,
+                 s_char_u0[idx], s_char_v0[idx], s_char_u1[idx], s_char_v1[idx],
+                 r, g, b, a);
+        cur_x += gw + 1.0f * scale;
     }
-    return cur_x - x;
 }
 
 static void restore_gl_state(GLint prev_prog, GLint prev_vbo, GLint prev_active_tex, GLint prev_tex,
@@ -578,16 +625,16 @@ static void restore_gl_state(GLint prev_prog, GLint prev_vbo, GLint prev_active_
 }
 
 void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
-    /* If FPS counter enabled, calculate and draw it even when menu is closed */
-    static uint64_t last_time = 0;
-    static float fps = 30.0f;
-    static int frames = 0;
     uint64_t now = armTicksToNs(armGetSystemTick()) / 1000ull;
-    frames++;
-    if (now - last_time >= 500000ull) {
-        fps = (float)frames * 1000000.0f / (float)(now - last_time);
-        frames = 0;
-        last_time = now;
+    if (now - s_last_fps_calc >= 500000ull) {
+        float dt = (float)(now - s_last_fps_calc) / 1000000.0f;
+        if (dt > 0.0f) {
+            s_calc_total_fps = (float)s_total_frames / dt;
+            s_calc_real_fps = (float)s_real_frames / dt;
+            s_calc_gen_fps = (float)s_gen_frames / dt;
+        }
+        s_total_frames = s_real_frames = s_gen_frames = 0;
+        s_last_fps_calc = now;
     }
 
     if (!g_open && !options_show_fps()) return;
@@ -634,11 +681,19 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
 
     /* FPS Counter overlay if enabled */
     if (options_show_fps() && !g_open) {
-        char fps_str[32];
-        snprintf(fps_str, sizeof fps_str, "%.1f FPS", fps);
-        draw_rect(screen_w - 140.0f, 16.0f, 124.0f, 32.0f, 0.05f, 0.05f, 0.05f, 0.75f);
-        flush_verts(0);
-        draw_text(screen_w - 132.0f, 20.0f, 0.75f, fps_str, 0.3f, 1.0f, 0.4f, 1.0f);
+        char fps_str[48];
+        int show_mode = s_perf_rows[3].cur; /* 1 = simple, 2 = detailed */
+        if (options_get_frame_gen() > 0 && show_mode == 2) {
+            snprintf(fps_str, sizeof fps_str, "%.1f FPS (FG: %.0fR+%.0fG)", s_calc_total_fps, s_calc_real_fps, s_calc_gen_fps);
+            draw_rect(screen_w - 240.0f, 16.0f, 224.0f, 32.0f, 0.05f, 0.05f, 0.05f, 0.75f);
+            flush_verts(0);
+            draw_text(screen_w - 232.0f, 20.0f, 0.75f, fps_str, 0.3f, 1.0f, 0.4f, 1.0f);
+        } else {
+            snprintf(fps_str, sizeof fps_str, "%.1f FPS", s_calc_total_fps);
+            draw_rect(screen_w - 140.0f, 16.0f, 124.0f, 32.0f, 0.05f, 0.05f, 0.05f, 0.75f);
+            flush_verts(0);
+            draw_text(screen_w - 132.0f, 20.0f, 0.75f, fps_str, 0.3f, 1.0f, 0.4f, 1.0f);
+        }
         flush_verts(1);
         restore_gl_state(prev_prog, prev_vbo, prev_active_tex, prev_tex, prev_vp,
                          prev_blend, prev_blend_src_rgb, prev_blend_dst_rgb,
@@ -684,56 +739,66 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     flush_verts(0);
 
     /* Text pass (mode = 1) */
-    /* Draw Tab titles */
+    /* Draw tab titles */
     for (int t = 0; t < NUM_TABS; t++) {
-        float tx = 80.0f + t * tab_spacing + 10.0f;
+        float tx = 80.0f + t * tab_spacing;
         if (t == g_tab) {
-            draw_text(tx, 54.0f, 0.85f, kTabNames[t], 1.0f, 1.0f, 1.0f, 1.0f);
+            draw_text(tx, 56.0f, 1.0f, kTabNames[t], 1.0f, 1.0f, 1.0f, 1.0f);
         } else {
-            draw_text(tx, 54.0f, 0.85f, kTabNames[t], 0.60f, 0.68f, 0.80f, 0.80f);
+            draw_text(tx, 56.0f, 1.0f, kTabNames[t], 0.6f, 0.65f, 0.75f, 0.8f);
         }
     }
 
-    /* Draw Options for current tab */
-    for (int i = scroll_top; i < end_vis; i++) {
-        MenuRow* r = &s_tab_rows[g_tab][i];
-        float ry = 124.0f + (i - scroll_top) * 42.0f;
-        if (i == g_row) {
-            draw_text(100.0f, ry, 0.85f, r->name, 1.0f, 1.0f, 0.85f, 1.0f);
-            char val[64];
-            if (r->num_opts > 1) {
-                snprintf(val, sizeof val, "< %s >", r->opts[r->cur]);
+    /* Draw visible rows in the current tab */
+    MenuRow* rows = s_tab_rows[g_tab];
+    for (int r = scroll_top; r < end_vis; r++) {
+        float ry = 124.0f + (r - scroll_top) * 42.0f;
+        int active = (r == g_row);
+        float cr = active ? 1.0f : 0.82f;
+        float cg = active ? 1.0f : 0.85f;
+        float cb = active ? 1.0f : 0.90f;
+
+        draw_text(90.0f, ry, 0.95f, rows[r].name, cr, cg, cb, 1.0f);
+
+        /* Value / choice */
+        int cur_val = rows[r].cur;
+        if (cur_val >= 0 && cur_val < rows[r].num_opts) {
+            char val_buf[64];
+            if (rows[r].num_opts > 1) {
+                snprintf(val_buf, sizeof val_buf, "<  %s  >", rows[r].opts[cur_val]);
             } else {
-                snprintf(val, sizeof val, "[ %s ]", r->opts[r->cur]);
+                snprintf(val_buf, sizeof val_buf, "%s", rows[r].opts[cur_val]);
             }
-            draw_text(screen_w - 480.0f, ry, 0.85f, val, 0.40f, 0.90f, 1.0f, 1.0f);
-        } else {
-            draw_text(100.0f, ry, 0.85f, r->name, 0.85f, 0.85f, 0.85f, 0.95f);
-            draw_text(screen_w - 465.0f, ry, 0.85f, r->opts[r->cur], 0.70f, 0.75f, 0.80f, 0.90f);
+            float vr = active ? 0.35f : 0.70f;
+            float vg = active ? 0.85f : 0.75f;
+            float vb = active ? 1.00f : 0.85f;
+            draw_text(screen_w - 480.0f, ry, 0.95f, val_buf, vr, vg, vb, 1.0f);
         }
     }
 
-    /* Scroll indicators */
+    /* Scroll indicators if needed */
     if (scroll_top > 0) {
-        draw_text(screen_w - 150.0f, 124.0f, 0.75f, "^ More", 0.40f, 0.85f, 1.0f, 0.90f);
+        draw_text(screen_w / 2 - 20.0f, 105.0f, 0.8f, "^ More ^", 0.5f, 0.8f, 1.0f, 0.7f);
     }
     if (end_vis < count) {
-        draw_text(screen_w - 150.0f, 124.0f + (max_vis - 1) * 42.0f, 0.75f, "v More", 0.40f, 0.85f, 1.0f, 0.90f);
+        draw_text(screen_w / 2 - 20.0f, 120.0f + max_vis * 42.0f, 0.8f, "v More v", 0.5f, 0.8f, 1.0f, 0.7f);
     }
 
-    /* Bottom help text / status message */
-    MenuRow* sel = &s_tab_rows[g_tab][g_row];
-    if (s_status_timer > 0) {
+    /* Help text */
+    if (g_row >= 0 && g_row < count && rows[g_row].help) {
+        draw_text(90.0f, screen_h - 96.0f, 0.85f, rows[g_row].help, 0.85f, 0.90f, 0.95f, 0.95f);
+    }
+
+    /* Status message */
+    if (s_status_timer > 0 && s_status_msg) {
         s_status_timer--;
-        draw_text(95.0f, screen_h - 104.0f, 0.75f, s_status_msg ? s_status_msg : "", 0.30f, 1.0f, 0.40f, 1.0f);
-    } else {
-        draw_text(95.0f, screen_h - 104.0f, 0.75f, sel->help, 0.90f, 0.90f, 0.60f, 1.0f);
+        draw_text(screen_w - 460.0f, screen_h - 70.0f, 0.85f, s_status_msg, 0.3f, 1.0f, 0.4f, 1.0f);
     }
 
-    /* Quick controls guide */
-    draw_text(95.0f, screen_h - 78.0f, 0.70f,
-              "[L/R] Switch Tab   [D-Pad] Navigate   [A / Left-Right] Adjust   [B] Close",
-              0.55f, 0.65f, 0.75f, 0.90f);
+    /* Controller guide footer */
+    draw_text(90.0f, screen_h - 30.0f, 0.75f,
+              "L/R, ZL/ZR: Switch Tabs  |  D-Pad/Stick: Navigate  |  Left/Right, A: Change Value  |  B: Close Menu",
+              0.55f, 0.60f, 0.70f, 0.9f);
 
     flush_verts(1);
 

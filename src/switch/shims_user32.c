@@ -2,6 +2,7 @@
 
 
 #include <stdlib.h>
+#include <switch.h>
 #include "usm_switch.h"
 #include "options_menu.h"
 
@@ -14,7 +15,28 @@ static uint32_t g_wndproc;
 static void RegisterClassExA_(Ctx* c) { g_wndproc = LD32(ARG(0) + 8); c->eax = 0xc000; }  /* WNDCLASSEX.lpfnWndProc */
 static void RegisterClassA_(Ctx* c) { g_wndproc = LD32(ARG(0) + 4); c->eax = 0xc000; }
 static void CreateWindowExA_(Ctx* c) { vlog("CreateWindowEx \"%s\"\n", ARG(2) ? S(2) : ""); c->eax = HWND_MAIN; }
-static void DefWindowProcA_(Ctx* c) { c->eax = 0; }
+static void DefWindowProcA_(Ctx* c) {
+    uint32_t msg = ARG(1);
+    if (msg == 0x0010) { /* WM_CLOSE */
+        vlog("DefWindowProcA(WM_CLOSE): exiting cleanly to Horizon OS\n");
+        void reg_flush(void);
+        reg_flush();
+        options_menu_cleanup();
+        svcExitProcess();
+    }
+    c->eax = 0;
+}
+static void SendMessageA_(Ctx* c) {
+    uint32_t msg = ARG(1);
+    if (msg == 0x0010 || msg == 0x0002 || msg == 0x0012) { /* WM_CLOSE, WM_DESTROY, WM_QUIT */
+        vlog("SendMessageA(msg=%04x): exiting cleanly to Horizon OS\n", msg);
+        void reg_flush(void);
+        reg_flush();
+        options_menu_cleanup();
+        svcExitProcess();
+    }
+    c->eax = 0;
+}
 static void PeekMessageA_(Ctx* c) { c->eax = 0; }  /* no messages, ever */
 static void GetMessageA_(Ctx* c) { svcSleepThread(1000 * 1000ull); c->eax = 1; memset(H(ARG(0)), 0, 28); }
 static void GetSystemMetrics_(Ctx* c) { c->eax = ARG(0) == 0 ? SCREEN_W : ARG(0) == 1 ? SCREEN_H : 0; }
@@ -48,17 +70,26 @@ static void PtInRect_(Ctx* c) {  /* (rect*, POINT by value: x, y) */
     c->eax = x >= l && x < (int32_t)LD32(ARG(0) + 8) && y >= t && y < (int32_t)LD32(ARG(0) + 12);
 }
 static void Hwnd_(Ctx* c) { c->eax = HWND_MAIN; }
+static void DestroyWindow_(Ctx* c) {
+    vlog("DestroyWindow called: exiting cleanly to Horizon OS\n");
+    void reg_flush(void);
+    reg_flush();
+    options_menu_cleanup();
+    svcExitProcess();
+}
 static void PostQuitMessage_(Ctx* c) {
     vlog("PostQuitMessage(%d) called: exiting NRO cleanly to Horizon OS\n", (int)ARG(0));
+    void reg_flush(void);
+    reg_flush();
     options_menu_cleanup();
-    exit((int)ARG(0));
+    svcExitProcess();
 }
 
 const ShimDef shims_user32[] = {
     {"GetCursorPos", GetCursorPos_}, {"PtInRect", PtInRect_}, {"IsWindow", True_}, {"GetAsyncKeyState", Zero_},
     {"ClipCursor", True_}, {"SetCursor", Zero_}, {"GetFocus", Hwnd_}, {"GetDesktopWindow", Hwnd_}, {"GetDC", Hwnd_},
     {"UnregisterClassA", True_}, {"MoveWindow", True_}, {"SetWindowTextA", True_}, {"SetForegroundWindow", True_},
-    {"ValidateRect", True_}, {"SendMessageA", Zero_}, {"IsDialogMessage", Zero_}, {"IsDialogMessageA", Zero_},
+    {"ValidateRect", True_}, {"SendMessageA", SendMessageA_}, {"IsDialogMessage", Zero_}, {"IsDialogMessageA", Zero_},
     {"RegisterClassExA", RegisterClassExA_}, {"RegisterClassA", RegisterClassA_}, {"CreateWindowExA", CreateWindowExA_},
     {"DefWindowProcA", DefWindowProcA_}, {"PeekMessageA", PeekMessageA_}, {"GetMessageA", GetMessageA_},
     {"GetSystemMetrics", GetSystemMetrics_}, {"GetClientRect", GetClientRect_}, {"GetWindowRect", GetWindowRect_},
@@ -67,7 +98,7 @@ const ShimDef shims_user32[] = {
     {"LoadCursorA", True_}, {"TranslateMessage", True_}, {"DispatchMessageA", Zero_}, {"SetFocus", True_},
     {"GetKeyboardState", GetKeyboardState_}, {"MapVirtualKeyA", Zero_}, {"MessageBoxA", MessageBoxA_},
     {"GetForegroundWindow", GetForegroundWindow_}, {"GetActiveWindow", GetForegroundWindow_},
-    {"DestroyWindow", True_}, {"PostQuitMessage", PostQuitMessage_}, {"SetWindowLongA", Zero_}, {"GetWindowLongA", Zero_},
+    {"DestroyWindow", DestroyWindow_}, {"PostQuitMessage", PostQuitMessage_}, {"SetWindowLongA", Zero_}, {"GetWindowLongA", Zero_},
     {"AdjustWindowRect", True_}, {"AdjustWindowRectEx", True_}, {"ScreenToClient", True_},
     {NULL, NULL},
 };

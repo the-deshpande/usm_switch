@@ -324,3 +324,29 @@ int rc_longjmp(uint32_t jb, int v) {
     }
     return 0;
 }
+
+/* ---- Clean in-game quit hooks ---- */
+void reg_flush(void);
+void options_menu_cleanup(void);
+void fo_5e99d0(Ctx* c);
+
+static void quit_now(void) {
+    vlog("quit_now: flushing registry and exiting cleanly to Horizon OS\n");
+    reg_flush();
+    options_menu_cleanup();
+    svcExitProcess();
+}
+
+void f_5e99d0(Ctx* c) {
+    /* 57b8b3 sets 0x95c178 on in-game quit; 5ad5bb is the return address from teardown delete */
+    if (rc_guest && LD8(0x95c178) && LD32(c->esp) == 0x5ad5bb) {
+        quit_now();
+    }
+    fo_5e99d0(c);
+}
+
+void f_4c2a80(Ctx* c) {
+    (void)c;
+    quit_now();
+}
+

@@ -321,6 +321,12 @@ static void dump_frame(void) {
 static void pace(void) {
     int cap = options_get_fps_cap();
     if (!cap) return;
+    int fg = options_get_frame_gen();
+    /* When 60 FPS target is selected with Frame Generation enabled,
+       real frames pace at 30 Hz so that 1 real + 1 generated = 60 FPS total presentation */
+    if (cap == 60 && fg > 0) {
+        cap = 30;
+    }
     static uint64_t next;
     uint64_t now = armTicksToNs(armGetSystemTick()) / 1000ull;
     uint64_t period = 1000000u / cap;
@@ -328,19 +334,310 @@ static void pace(void) {
     next = now - next < period ? next + period : now + period;
 }
 
+static GLuint s_frame_textures[2] = {0, 0};
+static int s_cur_frame_idx = 0;
+static int s_frame_textures_ready = 0;
+static GLuint s_post_prog = 0;
+static GLuint s_framegen_prog = 0;
+
+static GLuint compile_quad_shader(GLenum type, const char* src) {
+    GLuint s = glCreateShader(type);
+    glShaderSource(s, 1, &src, NULL);
+    glCompileShader(s);
+    GLint ok = 0;
+    glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+        char buf[512];
+        glGetShaderInfoLog(s, sizeof buf, NULL, buf);
+        vlog("gl quad shader error: %s\n", buf);
+        glDeleteShader(s);
+        return 0;
+    }
+    return s;
+}
+
+static void init_post_shaders(void) {
+    if (s_post_prog) return;
+
+    static const char* vs =
+        "#version 430 core\n"
+        "out vec2 v_uv;\n"
+        "void main() {\n"
+        "    float x = -1.0 + float((gl_VertexID & 1) << 2);\n"
+        "    float y = -1.0 + float((gl_VertexID & 2) << 1);\n"
+        "    v_uv = vec2(x * 0.5 + 0.5, y * 0.5 + 0.5);\n"
+        "    gl_Position = vec4(x, y, 0.0, 1.0);\n"
+        "}\n";
+
+    static const char* fs_post =
+        "#version 430 core\n"
+        "precision highp float;\n"
+        "uniform sampler2D u_tex;\n"
+        "uniform vec2 u_inv_res;\n"
+        "uniform int u_fxaa_level;\n"
+        "uniform int u_sharpen_mode;\n"
+        "in vec2 v_uv;\n"
+        "out vec4 fragColor;\n"
+        "\n"
+        "float rgb2luma(vec3 rgb) {\n"
+        "    return dot(rgb, vec3(0.299, 0.587, 0.114));\n"
+        "}\n"
+        "\n"
+        "vec3 apply_fxaa(vec2 uv) {\n"
+        "    vec3 rgbM = texture(u_tex, uv).rgb;\n"
+        "    if (u_fxaa_level == 0) return rgbM;\n"
+        "    float lumaM = rgb2luma(rgbM);\n"
+        "    float lumaNW = rgb2luma(texture(u_tex, uv + vec2(-u_inv_res.x, -u_inv_res.y)).rgb);\n"
+        "    float lumaNE = rgb2luma(texture(u_tex, uv + vec2( u_inv_res.x, -u_inv_res.y)).rgb);\n"
+        "    float lumaSW = rgb2luma(texture(u_tex, uv + vec2(-u_inv_res.x,  u_inv_res.y)).rgb);\n"
+        "    float lumaSE = rgb2luma(texture(u_tex, uv + vec2( u_inv_res.x,  u_inv_res.y)).rgb);\n"
+        "    float lumaMin = min(lumaM, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));\n"
+        "    float lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));\n"
+        "    float lumaRange = lumaMax - lumaMin;\n"
+        "    float edgeThreshold = (u_fxaa_level == 1) ? 0.25 : (u_fxaa_level == 2 ? 0.166 : 0.0833);\n"
+        "    if (lumaRange < max(0.04, lumaMax * edgeThreshold)) return rgbM;\n"
+        "    vec2 dir;\n"
+        "    dir.x = -((lumaNW + lumaNE) - (lumaSW + lumaSE));\n"
+        "    dir.y =  ((lumaNW + lumaSW) - (lumaNE + lumaSE));\n"
+        "    float dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * (0.25 * 0.125), 0.0078125);\n"
+        "    float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);\n"
+        "    float maxSpan = (u_fxaa_level == 3) ? 12.0 : 8.0;\n"
+        "    dir = min(vec2(maxSpan), max(vec2(-maxSpan), dir * rcpDirMin)) * u_inv_res;\n"
+        "    vec3 rgbA = 0.5 * (\n"
+        "        texture(u_tex, uv + dir * (1.0 / 3.0 - 0.5)).rgb +\n"
+        "        texture(u_tex, uv + dir * (2.0 / 3.0 - 0.5)).rgb);\n"
+        "    vec3 rgbB = rgbA * 0.5 + 0.25 * (\n"
+        "        texture(u_tex, uv + dir * -0.5).rgb +\n"
+        "        texture(u_tex, uv + dir *  0.5).rgb);\n"
+        "    float lumaB = rgb2luma(rgbB);\n"
+        "    return ((lumaB < lumaMin) || (lumaB > lumaMax)) ? rgbA : rgbB;\n"
+        "}\n"
+        "\n"
+        "vec3 apply_sharpen(vec3 color, vec2 uv) {\n"
+        "    if (u_sharpen_mode == 0) return color;\n"
+        "    vec3 n = texture(u_tex, uv + vec2(0.0, -u_inv_res.y)).rgb;\n"
+        "    vec3 s = texture(u_tex, uv + vec2(0.0,  u_inv_res.y)).rgb;\n"
+        "    vec3 w = texture(u_tex, uv + vec2(-u_inv_res.x, 0.0)).rgb;\n"
+        "    vec3 e = texture(u_tex, uv + vec2( u_inv_res.x, 0.0)).rgb;\n"
+        "    float lM = rgb2luma(color);\n"
+        "    float lN = rgb2luma(n);\n"
+        "    float lS = rgb2luma(s);\n"
+        "    float lW = rgb2luma(w);\n"
+        "    float lE = rgb2luma(e);\n"
+        "    float lMin = min(lM, min(min(lN, lS), min(lW, lE)));\n"
+        "    float lMax = max(lM, max(max(lN, lS), max(lW, lE)));\n"
+        "    float contrast = clamp(min(lMin, 2.0 - lMax) / max(lMax, 0.01), 0.0, 1.0);\n"
+        "    float strength = (u_sharpen_mode == 2) ? 0.35 : 0.20;\n"
+        "    float weight = -sqrt(contrast) * strength;\n"
+        "    vec3 sharp = (color + weight * (n + s + w + e)) / (1.0 + 4.0 * weight);\n"
+        "    return clamp(sharp, 0.0, 1.0);\n"
+        "}\n"
+        "\n"
+        "void main() {\n"
+        "    vec3 col = apply_fxaa(v_uv);\n"
+        "    if (u_sharpen_mode > 0) col = apply_sharpen(col, v_uv);\n"
+        "    fragColor = vec4(col, 1.0);\n"
+        "}\n";
+
+    static const char* fs_framegen =
+        "#version 430 core\n"
+        "precision highp float;\n"
+        "uniform sampler2D u_tex_cur;\n"
+        "uniform sampler2D u_tex_prev;\n"
+        "uniform vec2 u_inv_res;\n"
+        "uniform float u_blend;\n"
+        "uniform int u_fxaa_level;\n"
+        "uniform int u_sharpen_mode;\n"
+        "in vec2 v_uv;\n"
+        "out vec4 fragColor;\n"
+        "\n"
+        "float rgb2luma(vec3 rgb) {\n"
+        "    return dot(rgb, vec3(0.299, 0.587, 0.114));\n"
+        "}\n"
+        "\n"
+        "void main() {\n"
+        "    vec3 curM = texture(u_tex_cur, v_uv).rgb;\n"
+        "    vec3 prevM = texture(u_tex_prev, v_uv).rgb;\n"
+        "    float lCur = rgb2luma(curM);\n"
+        "    float lPrev = rgb2luma(prevM);\n"
+        "    float gx = (rgb2luma(texture(u_tex_cur, v_uv + vec2(u_inv_res.x, 0.0)).rgb) -\n"
+        "                rgb2luma(texture(u_tex_cur, v_uv - vec2(u_inv_res.x, 0.0)).rgb)) * 0.5;\n"
+        "    float gy = (rgb2luma(texture(u_tex_cur, v_uv + vec2(0.0, u_inv_res.y)).rgb) -\n"
+        "                rgb2luma(texture(u_tex_cur, v_uv - vec2(0.0, u_inv_res.y)).rgb)) * 0.5;\n"
+        "    float gradSq = gx * gx + gy * gy;\n"
+        "    vec2 mv = vec2(0.0);\n"
+        "    if (gradSq > 0.0001) {\n"
+        "        float dt = lCur - lPrev;\n"
+        "        mv = clamp(-(dt / (gradSq + 0.02)) * vec2(gx, gy), -8.0 * u_inv_res, 8.0 * u_inv_res);\n"
+        "    }\n"
+        "    vec3 sampleCur = texture(u_tex_cur, v_uv - mv * 0.5).rgb;\n"
+        "    vec3 samplePrev = texture(u_tex_prev, v_uv + mv * 0.5).rgb;\n"
+        "    float weight = clamp(0.5 + (rgb2luma(sampleCur) - rgb2luma(samplePrev)) * 0.25, 0.35, 0.65);\n"
+        "    vec3 gen = mix(samplePrev, sampleCur, weight);\n"
+        "    if (u_sharpen_mode > 0) {\n"
+        "        vec3 n = texture(u_tex_cur, v_uv + vec2(0.0, -u_inv_res.y)).rgb;\n"
+        "        vec3 s = texture(u_tex_cur, v_uv + vec2(0.0,  u_inv_res.y)).rgb;\n"
+        "        vec3 w = texture(u_tex_cur, v_uv + vec2(-u_inv_res.x, 0.0)).rgb;\n"
+        "        vec3 e = texture(u_tex_cur, v_uv + vec2( u_inv_res.x, 0.0)).rgb;\n"
+        "        vec3 sharp = clamp((gen * 1.2) - 0.05 * (n + s + w + e), 0.0, 1.0);\n"
+        "        gen = mix(gen, sharp, 0.5);\n"
+        "    }\n"
+        "    fragColor = vec4(gen, 1.0);\n"
+        "}\n";
+
+    GLuint v1 = compile_quad_shader(GL_VERTEX_SHADER, vs);
+    GLuint f1 = compile_quad_shader(GL_FRAGMENT_SHADER, fs_post);
+    s_post_prog = glCreateProgram();
+    glAttachShader(s_post_prog, v1);
+    glAttachShader(s_post_prog, f1);
+    glLinkProgram(s_post_prog);
+    glDeleteShader(v1);
+    glDeleteShader(f1);
+
+    GLuint v2 = compile_quad_shader(GL_VERTEX_SHADER, vs);
+    GLuint f2 = compile_quad_shader(GL_FRAGMENT_SHADER, fs_framegen);
+    s_framegen_prog = glCreateProgram();
+    glAttachShader(s_framegen_prog, v2);
+    glAttachShader(s_framegen_prog, f2);
+    glLinkProgram(s_framegen_prog);
+    glDeleteShader(v2);
+    glDeleteShader(f2);
+}
+
+static void ensure_frame_textures(uint32_t w, uint32_t h) {
+    if (s_frame_textures[0]) return;
+    for (int i = 0; i < 2; i++) {
+        glGenTextures(1, &s_frame_textures[i]);
+        glBindTexture(GL_TEXTURE_2D, s_frame_textures[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    init_post_shaders();
+}
+
 static void present_(void) {
     if (g_fb) glBindFramebuffer(GL_FRAMEBUFFER, g_fb = 0);
     dump_frame();
+
+    /* Clean quit check: if in-game quit flag is set, cleanly exit immediately */
+    if (rc_guest && LD8(0x95c178) != 0) {
+        vlog("present_: in-game quit flag set (0x95c178=1) -> exiting cleanly to Horizon OS\n");
+        options_menu_cleanup();
+        svcExitProcess();
+    }
+
     uint64_t t = armTicksToNs(armGetSystemTick()) / 1000ull;
+    static uint64_t s_last_real_us = 0;
+    uint64_t real_delta_us = s_last_real_us ? (t - s_last_real_us) : 33333ull;
+    s_last_real_us = t;
+
     pace();
 
-    /* Render Options Menu overlay if active */
+    ensure_frame_textures(SWITCH_SCREEN_W, SWITCH_SCREEN_H);
+    int cap = options_get_fps_cap();
+    int fg = options_get_frame_gen();
+    int fxaa = options_get_fxaa();
+    int sharp = options_get_sharpen();
+    int vsync = options_get_vsync();
+
+    /* Dynamically apply VSync setting if changed */
+    static int s_cur_vsync = -1;
+    if (vsync != s_cur_vsync) {
+        s_cur_vsync = vsync;
+        eglSwapInterval(s_display, vsync ? 1 : 0);
+    }
+
+    /* Copy rendered framebuffer into ping-pong frame texture */
+    s_cur_frame_idx ^= 1;
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, s_frame_textures[s_cur_frame_idx]);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, SWITCH_SCREEN_W, SWITCH_SCREEN_H);
+    s_frame_textures_ready++;
+
+    /* If Post-Processing (FXAA or Sharpening) is active, pass through s_post_prog */
+    if ((fxaa > 0 || sharp > 0) && s_post_prog) {
+        glViewport(0, 0, SWITCH_SCREEN_W, SWITCH_SCREEN_H);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
+        glDisable(GL_SCISSOR_TEST);
+        glUseProgram(s_post_prog);
+        glUniform1i(glGetUniformLocation(s_post_prog, "u_tex"), 0);
+        glUniform2f(glGetUniformLocation(s_post_prog, "u_inv_res"), 1.0f / (float)SWITCH_SCREEN_W, 1.0f / (float)SWITCH_SCREEN_H);
+        glUniform1i(glGetUniformLocation(s_post_prog, "u_fxaa_level"), fxaa);
+        glUniform1i(glGetUniformLocation(s_post_prog, "u_sharpen_mode"), sharp);
+        glBindVertexArray(g_main_vao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+
+    /* Render Options Menu overlay on real frame */
+    options_record_real_frame();
     options_menu_render(SWITCH_SCREEN_W, SWITCH_SCREEN_H);
     if (g_main_vao) glBindVertexArray(g_main_vao);
     gc_reset();
 
     eglSwapBuffers(s_display, s_surface);
     g_present_us += (armTicksToNs(armGetSystemTick()) / 1000ull) - t;
+
+    /* FRAME GENERATION: Decide whether to generate an intermediate frame */
+    int should_gen = 0;
+    if (fg > 0 && s_frame_textures_ready >= 2 && s_framegen_prog) {
+        if (fg == 1) {
+            /* 60 FPS AI Interpolation: always synthesize 1 intermediate frame */
+            should_gen = 1;
+        } else if (fg == 2) {
+            /* Dynamic Adaptive Gen:
+               - If cap == 60: generate to 60 FPS
+               - If cap == 30: if real frame took longer than ~33ms (real FPS dropped to 20-28),
+                 insert an intermediate frame to boost display to a smooth 30 FPS! */
+            if (cap == 60) {
+                should_gen = 1;
+            } else if (cap == 30) {
+                if (real_delta_us > 34000ull) {
+                    should_gen = 1;
+                }
+            } else {
+                should_gen = 1;
+            }
+        }
+    }
+
+    if (should_gen) {
+        glViewport(0, 0, SWITCH_SCREEN_W, SWITCH_SCREEN_H);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
+        glDisable(GL_SCISSOR_TEST);
+        glUseProgram(s_framegen_prog);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, s_frame_textures[s_cur_frame_idx]);
+        glUniform1i(glGetUniformLocation(s_framegen_prog, "u_tex_cur"), 0);
+
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, s_frame_textures[s_cur_frame_idx ^ 1]);
+        glUniform1i(glGetUniformLocation(s_framegen_prog, "u_tex_prev"), 1);
+
+        glUniform2f(glGetUniformLocation(s_framegen_prog, "u_inv_res"), 1.0f / (float)SWITCH_SCREEN_W, 1.0f / (float)SWITCH_SCREEN_H);
+        glUniform1f(glGetUniformLocation(s_framegen_prog, "u_blend"), 0.5f);
+        glUniform1i(glGetUniformLocation(s_framegen_prog, "u_fxaa_level"), fxaa);
+        glUniform1i(glGetUniformLocation(s_framegen_prog, "u_sharpen_mode"), sharp);
+
+        glBindVertexArray(g_main_vao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        /* Overlay on generated frame */
+        options_record_gen_frame();
+        options_menu_render(SWITCH_SCREEN_W, SWITCH_SCREEN_H);
+        if (g_main_vao) glBindVertexArray(g_main_vao);
+        gc_reset();
+
+        eglSwapBuffers(s_display, s_surface);
+    }
+
     glDisable(GL_SCISSOR_TEST);
     glColorMask(1, 1, 1, 1), glDepthMask(1), glStencilMask(0xff);
     glClearColor(0, 0, 0, 1);
@@ -1296,10 +1593,23 @@ static void* watchdog(void* arg) {
     uint32_t last = 0, quiet = 0;
     for (;;) {
         svcSleepThread(1000000000ull);
+        /* Check if in-game quit flag was set by game menu */
+        if (rc_guest && LD8(0x95c178) != 0) {
+            vlog("watchdog: detected in-game quit flag set (0x95c178=1) -> exiting cleanly to Horizon OS\n");
+            options_menu_cleanup();
+            svcExitProcess();
+        }
         if (g_presents != last) { last = g_presents, quiet = 0; continue; }
-        if (++quiet == 4 || quiet % 10 == 0)
-            vlog("gl: no Present for %u s: %u frames, %u buffers handed over, game thread %s, render thread on command %d\n",
-                 quiet, g_presents, g_jobs, g_in_flush ? "waiting for it" : "running", g_rcmd);
+        if (++quiet >= 3) {
+            if (rc_guest && LD8(0x95c178) != 0) {
+                vlog("watchdog: quit detected with stalled render -> exiting cleanly to Horizon OS\n");
+                options_menu_cleanup();
+                svcExitProcess();
+            }
+            if (quiet == 4 || quiet % 10 == 0)
+                vlog("gl: no Present for %u s: %u frames, %u buffers handed over, game thread %s, render thread on command %d\n",
+                     quiet, g_presents, g_jobs, g_in_flush ? "waiting for it" : "running", g_rcmd);
+        }
     }
     return NULL;
 }
