@@ -633,7 +633,16 @@ static void VirtualFree_(Ctx* c) { if (ARG(2) & 0x8000) game_free(H(ARG(0))); c-
 static void VirtualQuery_(Ctx* c) {
     uint32_t a = ARG(0), m = ARG(1);
     /* committed read-write private if mapped, else free: the game's allocator (592d50) reads the page only if committed */
-    int mapped = (a >= 0x400000 && a < 0x80000000u);
+    void* hp = H(a & ~0xfffu);
+    int mapped = 0;
+    if (hp) {
+        MemoryInfo mi;
+        u32 pi = 0;
+        Result rc = svcQueryMemory(&mi, &pi, (u64)hp);
+        if (R_SUCCEEDED(rc) && mi.type != MemType_Unmapped && (mi.perm & Perm_R)) {
+            mapped = 1;
+        }
+    }
     uint32_t v[7] = {a & ~0xfffu, a & ~0xfffu, 4, 0x1000, mapped ? 0x1000 : 0x10000, mapped ? 4 : 1, 0x20000};
     memcpy(H(m), v, 28);
     c->eax = 28;
