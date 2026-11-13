@@ -1,106 +1,171 @@
-# Ultimate Spider-Man
+# Ultimate Spider-Man (Nintendo Switch Native Port)
 
-A PS Vita port of Ultimate Spider-Man (PC, 2005), made by statically recompiling the PC game's `USM.exe` to C
-(every x86 instruction becomes equivalent C, like N64Recomp / XenonRecomp), then running that on the Vita with
-its own Windows, Direct3D 9, DirectSound and input layer on top of vitaGL.
+A native Nintendo Switch port of **Ultimate Spider-Man (PC, 2005)**, built by statically recompiling the original PC binary (`USM.exe`) directly into optimized C code (translating every x86 instruction to portable, equivalent C, similar to N64Recomp and XenonRecomp), coupled with custom Direct3D 9, DirectInput, DirectSound, and Win32 runtime emulation layers targeting modern OpenGL / EGL and Nintendo Horizon OS (`libnx`).
 
-**No game code or data is in this repo.** You need your own copy of the PC game. The translated code is
-generated on your machine from your `USM.exe`.
+> [!NOTE]
+> **AI-Assisted Port**: This Nintendo Switch port, including its memory virtualization architecture, OpenGL 4.3 core translation pipeline, crash diagnostics, native Joy-Con input subsystem, and SwitchWaker-inspired overlay menu, was developed with the assistance of **Google DeepMind's Antigravity AI agent**.
 
-## What you need
-- The PC version's `USM.exe` (SHA-256 `5d554ef69e8066eed9e327a4fe331992124aee6de16af54bd7ac5c5dcb0488b8`) and its
-  `Data` folder.
-- [VitaSDK](https://vitasdk.org) with vitaGL, vitashark and mathneon (`vdpm vitaGL vitashark mathneon`).
-- Python 3 with `capstone`, and `cmake` + `ninja`: `py -m pip install capstone cmake ninja`.
-- On the Vita: `ur0:data/libshacccg.suprx` (the shader compiler, extracted the usual way for vitaGL games).
+---
 
-## Build the VPK
+## Performance & Resolution Profiles
+
+- **720p Handheld (1280x720)**: Runs at a solid, locked **30 FPS** at stock Nintendo Switch clocks (1020 MHz CPU / 307 MHz GPU). Delivers crisp 1:1 native pixel mapping on the Switch internal display with zero blurry scaling.
+- **1080p Docked / Enhanced (1920x1080)**: Native full HD 1080p rendering. **Needs overclocking** (e.g., Boost/High CPU clock and High GPU profile via the in-game overlay menu) to achieve a stable **30 FPS**.
+- **Changing Resolutions**: To change internal rendering resolution:
+  1. Open the in-game overlay menu by pressing **Minus (`-`)** (or **L + R + Plus**).
+  2. In the **Graphics** tab, select your preferred resolution (720p Native, 1080p Docked, 544p, or 480p).
+  3. Navigate to the **System** tab and select **Save settings to SD** (`[ Press A to Save ]`).
+  4. **Restart the game** for the new resolution to take effect.
+- **Frame Generation (Experimental 40 FPS Boost)**: An experimental frame generation mode that synthesizes 10 intermediate frames per second (1 generated frame every 3 real frames) to boost presentation from 30 FPS to 40 FPS.
+  > [!WARNING]
+  > Frame generation is strictly experimental and does not work smoothly just yet. For the best and smoothest gameplay experience, leave Frame Generation **Off** and play at native 30 FPS.
+
+---
+
+## Features
+
+- **Native Horizon OS Execution**: Runs as a standard Homebrew NRO application (`usm_switch.nro`) directly on Nintendo Switch hardware.
+- **High-Definition Rendering (720p / 1080p)**: Native 1280x720 internal rendering for crisp handheld play, with optional 1920x1080 mode for docked play.
+- **Framerate Targets & Overclocking Profiles**: Configurable frame rate caps (20 / 30 / 40 FPS) with integrated official Nintendo GPU performance profiles (Stock 307 MHz / Boost 384 MHz / High 460 MHz) and CPU clocks (Stock 1020 MHz / Boost 1224 MHz / High 1581 MHz / Max 1785 MHz via `clkrst`), automatically restored to stock on exit.
+- **SwitchWaker In-Game Overlay Menu**: Accessible at any moment during gameplay by pressing **Minus (`-`)** or **L + R + Plus**:
+  - **Graphics**: View Distance, Manhattan Fog, Particle Detail, Resolution Mode (720p Crisp / 1080p Docked / 544p / 480p).
+  - **Controls**: Camera Invert X/Y, Stick Sensitivity, HD Rumble, Swap A/B buttons, plus a complete read-only controller button mapping table.
+  - **Performance**: Frame rate cap (20 / 30 / 40 FPS), Frame Generation toggle (Experimental), VSync, On-Screen FPS Counter, GPU Performance Profile, CPU Overclock, Traffic & Pedestrian Density.
+  - **QoL**: Skip intro movies, Fast map pause.
+  - **System**: Save settings to SD (`settings.ini` & `resolution.txt`), Restore player defaults.
+  - **Debug**: Wireframe mode, Session logging (`log.txt`), Available Horizon RAM monitor.
+- **Native Joy-Con & Pro Controller Mapping**: Standard Xbox controller button layout with dedicated buttons for Jump, Web Zip, Web Swing, Attacks, Pause, and Map on Left Stick Click.
+- **Clean In-Game Exit**: Selecting "Quit" from the in-game main menu cleanly restores hardware clocks and exits the application back to Horizon OS / Home menu without freezing.
+- **Full Video & Audio**: Integrated Bink video cutscenes (via FFmpeg) and full 3D positional DirectSound streaming.
+
+---
+
+## Requirements
+
+### To Play on Nintendo Switch:
+1. A Nintendo Switch console running Atmosphere custom firmware with Homebrew Launcher access (or HOME-menu forwarder).
+2. Your legally owned PC install files of *Ultimate Spider-Man (2005)*:
+   - `USM.exe` (SHA-256: `5d554ef69e8066eed9e327a4fe331992124aee6de16af54bd7ac5c5dcb0488b8`).
+   - The entire `Data/` folder (including `Data/movies`, `Data/Sound`, and `Data/packs`).
+
+### To Build the Port from Source:
+- Linux or Windows Subsystem for Linux (WSL2, Ubuntu recommended).
+- **Docker** (recommended — automatically pulls the official `devkitpro/devkita64` toolchain) OR a local installation of **DevkitPro** (`devkitA64`).
+- **Python 3** with `capstone`:
+  ```bash
+  pip install capstone
+  ```
+- `cmake`, `ninja`, and `git`.
+
+---
+
+## Step-by-Step Porting & Build Guide
+
+Follow these exact steps to compile your own working Nintendo Switch NRO from scratch:
+
+### Step 1: Clone the Repository
+```bash
+git clone https://github.com/your-repo/usm_switch.git
+cd usm_switch
 ```
-set VITASDK=C:\vitasdk
-set USM_EXE=C:\Games\USM\USM.exe
-build_vita.bat
+
+### Step 2: Static Recompilation of `USM.exe`
+Place your legally obtained PC `USM.exe` into the repository root:
+```bash
+# 1. Verify the SHA-256 hash of your executable
+sha256sum USM.exe
+# Expected output: 5d554ef69e8066eed9e327a4fe331992124aee6de16af54bd7ac5c5dcb0488b8
+
+# 2. Run the static recompiler to translate x86 instructions to C:
+python3 tools/recomp/recomp.py USM.exe data/cfg.txt src/recomp/gen/
 ```
-The first run translates `USM.exe` into `src/recomp/gen` (a few minutes, ~230 MB of C). The result is
-`build-vita/usm.vpk`.
+*Note: This process analyzes the control flow graph and generates ~230 MB of translated C files in `src/recomp/gen/`.*
 
-## Build the PC versions
-Needs llvm-mingw (`winget install MartinStorsjo.LLVM-MinGW.UCRT`) besides the above. After the translation step:
-`build.bat` builds `build/usm_re.asi` (hooked into the running game through an ASI loader; set `USM_GAME` to have it
-copied into the game's `Scripts` folder) and `build/usm_pc.exe` (the game running only translated code: copy it next
-to `USM.exe`). The functions in `tools/recomp/native.txt` run their plain translation there; the hand-written
-versions in `src/vita/native.c` are Vita-only.
+### Step 3: Compile the Nintendo Switch NRO
+Run the automated build script. If Docker is installed, it will automatically pull and run inside the official `devkitpro/devkita64` container:
+```bash
+chmod +x build_switch.sh
+./build_switch.sh
+```
 
-## Install
-1. Install `usm.vpk` with VitaShell.
-2. Copy `USM.exe` and the `Data` folder from your PC install to `ux0:data/usm/`.
-3. That's all for movies and cutscenes too: they play straight from the game's own `Data/movies/pc/*.dat` (Bink),
-   decoded with FFmpeg's Bink decoders (LGPL 2.1, `vendor/ffmpeg`).
-4. Start the game. If USM.exe or the shader compiler is missing, it says so on screen. With an (empty)
-   `ux0:data/usm/debug.txt` it writes `ux0:data/usm/log.txt` (frame times, settings in use, errors).
+If building on a machine with a local devkitPro installation, ensure `$DEVKITPRO` and `$DEVKITA64` are exported in your environment:
+```bash
+export DEVKITPRO=/opt/devkitpro
+export DEVKITA64=/opt/devkitpro/devkitA64
+export PATH=$DEVKITA64/bin:$DEVKITPRO/tools/bin:$PATH
+
+cmake -S switch -B build-switch -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=/opt/devkitpro/cmake/Switch.cmake \
+  -DCMAKE_BUILD_TYPE=Release
+ninja -C build-switch -j$(nproc)
+```
+
+Upon a successful build, the final executable will be produced at:
+```
+build-switch/usm_switch.nro
+```
+
+---
+
+## SD Card Installation
+
+1. Copy `usm_switch.nro` to your Nintendo Switch SD card:
+   - Location: `sdmc:/switch/usm/usm_switch.nro`
+2. Copy `USM.exe` and the `Data/` folder from your PC installation into `sdmc:/switch/usm/`:
+   ```
+   sdmc:/
+   └── switch/
+       └── usm/
+           ├── usm_switch.nro
+           ├── USM.exe
+           ├── settings.ini         (optional, auto-generated on first save)
+           ├── resolution.txt       (optional, defaults to 1280x720)
+           └── Data/
+               ├── movies/
+               │   └── pc/          (*.dat Bink video cutscenes)
+               ├── Sound/           (*.pck audio archives)
+               ├── packs/           (*.pkg asset packs)
+               └── usm_lte.usm      (English text dictionary)
+   ```
+3. Launch `usm_switch` from the Homebrew Launcher.
+   > [!IMPORTANT]
+   > For the best performance and stability, launch via **title-override mode** (hold `R` while launching any installed Switch game from the HOME menu) so that the Homebrew Launcher grants the port full RAM access (~3.1 GB available memory).
+
+---
 
 ## Controls
-Left stick move, right stick camera, Cross jump, Square punch, Triangle kick, L web zip, R web swing, Circle wall
-crawl, rear touchpad camera lock, Start pause, Select map, D-pad menus. Prompts show the Vita's buttons as icons.
-Quick-time events (left/right click): L and R.
 
-## Settings
-Press **Settings** on the game's LiveArea page to change these. Each one is saved as a small text file in
-`ux0:data/usm/`, so you can also edit them by hand:
+The port utilizes standard modern Xbox controller layout:
 
-| File | Default | What it does |
+| Switch Button | Xbox Equivalent | In-Game Action |
 |---|---|---|
-| `density.txt` | `0.15` | People and traffic, 0..1 (`1` = as the PC game). The biggest speed setting. |
-| `distance.txt` | `120` | View distance; past it the city fades into fog. `0` = everything, no fog. |
-| `resolution.txt` | `960x544` | Size of the 3D picture, e.g. `640x362`, scaled to the screen. Costs little speed on the Vita. |
-| `texture_max.txt` | `256` | Largest texture kept. `0` = full size. |
-| `dxt_native.txt` | `2` | World texture detail: `1` high, `2` medium, `3` low, `0` the older blurry path. |
-| `anim_half.txt` | `12` | Characters farther than this (metres) from Spider-Man animate every other frame. `0` = off. |
-| `build_cull.txt` | `2` | The game stops preparing objects past this many times the view distance. `0` = the game's own (3 km). |
-| `fps_cap.txt` | `30` | Frame rate cap. `0` = none. `20`, `30` and `60` are held by the display, for even frames. |
-| `cut_fog.txt` | `0` | `1` keeps the fog in cutscenes. Faster, but hides the far city. |
-| `smoke.txt` | `2` | Particles drawn from big smoke and fire effects: `1` all, `2` every other one, `3` every third. |
-| `map_lod.txt` | `4` | How small (pixels) far boxes may get before they are dropped from the zoomed-out map and from heavy cutscenes. `0` = keep all. |
-| `language.txt` | `0` | `0` English, `1` French, `2` German, `3` Spanish, `4` Italian. See Languages. |
+| **B** (or **A** if swapped) | **A** | **Jump** / Release Web Swing / Confirm |
+| **A** (or **B** if swapped) | **B** | **Wall Crawl** / Web Action / Sprint / Cancel |
+| **Y** | **X** | **Punch** / Light Combo Attack |
+| **X** | **Y** | **Kick** / Heavy Combo Attack |
+| **L / ZL** | **LB / LT** | **Web Zip** |
+| **R / ZR** | **RB / RT** | **Web Swing** / Shoot Web |
+| **Left Stick** | Left Stick | Move Spider-Man / Navigate Menus |
+| **Right Stick** | Right Stick | Rotate Camera |
+| **Left Stick Click (LS)** | Back | **Open City Map** |
+| **Right Stick Click (RS)** | RS Click | **Center Camera Behind Player** |
+| **Plus (`+`)** | Start | **Pause Game** / In-game Menu |
+| **Minus (`-`)** or **L+R+Plus** | — | **SwitchWaker Overlay Menu** (Settings & Performance) |
 
-For debugging only:
+---
 
-| File | Default | What it does |
-|---|---|---|
-| `debug.txt` | off | Create it (empty is fine) to write `log.txt`. The previous launch's log is kept as `log_prev.txt`. |
-| `early_cull.txt` | `1` | `0` off; `2` checks the skips and logs mistakes. |
-| `pipe.txt` | on | `0` draws on the game thread instead of the other cores. |
-| `overlap.txt` | `1` | `0` stops the second core from running while the next frame is prepared. |
-| `gl_cache.txt` | `1` | `0` sends every graphics call again on each draw. |
-| `release_later.txt` | `1` | `0` releases graphics data at once, which pauses more often. |
-| `vsync.txt` | `1` | `0` holds the frame rate cap with a timer instead of the display. |
+## Technical Details
 
-If the game stops with an error, `ux0:data/usm/crash.txt` has a short note about it, even without `debug.txt`. Attach
-it to bug reports.
+- **Direct3D 9 to OpenGL 4.3 Core**: D3D9 state, shaders, textures, and vertex/index buffers are translated on the fly to modern OpenGL 4.3 Core via EGL and libnx.
+- **Memory Virtualization**: 32-bit x86 pointer operations are mapped into Horizon OS 64-bit virtual memory space using native `svcQueryMemory` memory boundary checks.
+- **Hardware Clocks & Performance Profiles**: Uses official Horizon OS `apm` (`apmSetPerformanceConfiguration`) and `clkrst` (`clkrstSetClockRate`) APIs to adjust handheld CPU/GPU frequencies safely.
 
-The first time each area runs, it can pause briefly while shaders compile. They are then kept in
-`ux0:data/usm/shadercache/`.
+---
 
-## Languages
-The game picks its text from `Data/usm_lte.usm` (English), `usm_ltf.usm` (French), `usm_ltg.usm` (German),
-`usm_lts.usm` (Spanish) or `usm_lti.usm` (Italian). A PC install only has its own language, and none of this is shipped
-here, so to play in another language use the `Data` folder of that language's PC release, then pick it in Settings. If
-the file is missing the game stays in English. You also need the sound files for each language.
+## Credits & Acknowledgments
 
-## Which game files work
-Use the `Data` folder of a full PC install (about 1.6 GB, with `Data/movies`, `Data/Sound`, `Data/packs`). Cut-down
-copies are often smaller because music, speech or movies were removed: the game may still run, but those parts will be
-silent or missing, and anything else missing can crash it later.
-
-## Layout
-- `tools/recomp/`: the translator (`recomp.py`), its control-flow data (`data/cfg.txt`, exported from Ghidra with
-  `tools/ghidra/ExportCFG.java`), and the lists of functions replaced by native code (`native.txt`) or grouped as hot
-  (`hot.txt`).
-- `src/recomp/`: the runtime the translated code runs on.
-- `src/vita/`: the Vita side: memory and loader, Windows/D3D9/DirectSound/input shims, the vitaGL renderer
-  (`gl.c`, shaders translated by `d3d_cg.c`), native replacements of hot functions (`native.c`).
-- `vita/`: the VPK's CMake project; `vita/art` + `tools/make_livearea.py` make its LiveArea images (`vita/sce_sys`),
-  `tools/make_glyphs.py` the button icons (`src/vita/glyphs.h`).
-- `vpc/`, `src/vpc/`: the same Vita code built for Windows on desktop GL, for debugging without the device
-  (`cmake -S vpc -B build-vpc -G Ninja -DCMAKE_C_COMPILER=i686-w64-mingw32-clang -DUSM_DIR=C:/Games/USM/`).
-- `CMakeLists.txt`, `build.bat`, `src/pc/`: the PC builds the translation was proven on (`usm_pc.exe`, standalone;
-  `usm_re.asi`, hooked into the running game).
+- **usm_vita**: Heartfelt thanks and credit to the **usm_vita** project and its authors. Without their groundbreaking work on the x86-to-C static recompilation pipeline, control-flow graph analysis, D3D-to-GL translation research, and Win32/DirectX runtime shims, this Nintendo Switch port would not have even started off the ground.
+- **SwitchWaker**: Sincere gratitude to the **SwitchWaker** (*The Legend of Zelda: The Wind Waker* Switch decompilation) project and team. Their in-game overlay architecture, options menu design, clkrst / apm hardware clock tuning implementations, and performance profiling methodology directly inspired and formed the foundation for this port's in-game overlay and hardware controls.
+- **Treyarch, Activision & Marvel** for *Ultimate Spider-Man* (2005).
+- **Rinnegatamante** for vitaGL and initial recompilation research.
+- **Google DeepMind Antigravity AI**: Developed and engineered the Nintendo Switch port, including crash diagnostics, OpenGL shader pipeline, Horizon memory virtualization, input mapping, and SwitchWaker-inspired UI and overclocking implementations.

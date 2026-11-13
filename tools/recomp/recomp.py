@@ -709,7 +709,8 @@ class Fn:
         if m == 'jecxz':
             return 'if (!ecx) { %s }' % self.jump(ops[0].imm)
         if m == 'call':
-            if (ops[0].type == X.X86_OP_MEM and not ops[0].mem.base and not ops[0].mem.index and self.imports.get(ops[0].mem.disp & 0xffffffff, ('', ''))[1] == 'setjmp3')                     or (ops[0].type == X.X86_OP_IMM and (ops[0].imm & 0xffffffff) in self.setjmp_thunks):
+            if (ops[0].type == X.X86_OP_MEM and not ops[0].mem.base and not ops[0].mem.index and self.imports.get(ops[0].mem.disp & 0xffffffff, ('', ''))[1] in ('setjmp3', '_setjmp3')) \
+                    or (ops[0].type == X.X86_OP_IMM and (ops[0].imm & 0xffffffff) in self.setjmp_thunks):
                 # setjmp in this function's own C frame, which longjmp (shimmed: rc_longjmp) returns to. Only the
                 # standalone build can route longjmp there, so the hook build leaves these functions original.
                 self.standalone_only = True
@@ -869,21 +870,12 @@ extern volatile long lifted_hits[];
 /* static x87 stack: the status word's TOP as the real stack would have it */
 #define FSWS(d) ((uint16_t)((rc_fsw(c) & ~0x3800) | (((c->ftop - (d)) & 7) << 11)))
 #ifdef RC_RELEASE
-/* register flow (tools/recomp/regflow.py): a direct call spills only what the callee reads, reloads what it changes */
-#define SYNC_OUT_SEL(...) (__VA_ARGS__)
-#define SYNC_IN_SEL(...) (__VA_ARGS__)
-#define SYNC_RET_SEL(...) (__VA_ARGS__)
-#ifdef RC_RETCHK /* vpc check: a register the flow says the function keeps must still match the Ctx at its ret */
-void rc_retbad(uint32_t fn, const char* reg, uint32_t local, uint32_t ctx);
-#define RC_RETSAVE uint32_t rk_eax = eax, rk_ecx = ecx, rk_edx = edx, rk_ebx = ebx, rk_ebp = ebp, rk_esi = esi, rk_edi = edi;     (void)rk_eax, (void)rk_ecx, (void)rk_edx, (void)rk_ebx, (void)rk_ebp, (void)rk_esi, (void)rk_edi
-#define RC_RETCHK(r, fn) do { if (r != rk_##r) rc_retbad(fn, #r, r, rk_##r); } while (0)
-/* (poisoning a callee's non-inputs does not work: the poison is a Ctx change nobody restores) */
-#define RC_POISON(r) ((void)0)
-#else
+#define SYNC_OUT_SEL(...) SYNC_OUT
+#define SYNC_IN_SEL(...) SYNC_IN
+#define SYNC_RET_SEL(...) SYNC_OUT
 #define RC_RETSAVE ((void)0)
 #define RC_RETCHK(r, fn) ((void)0)
 #define RC_POISON(r) ((void)0)
-#endif
 #define RC_CHECKFPU(n, at) ((void)0)
 #define RC_HIT(k) ((void)0)
 #ifdef RC_PROFILE /* the profiler's shadow call stack (rt.h) */
@@ -915,7 +907,7 @@ def main():
     funcs, imports = load_cfg()
     Fn.imports = imports
     # `jmp [setjmp3]` thunks: their callers count as setjmp callers too
-    slots = {a for a, (_, n) in imports.items() if n == 'setjmp3'}
+    slots = {a for a, (_, n) in imports.items() if n in ('setjmp3', '_setjmp3')}
     Fn.setjmp_thunks = set()
     for a in funcs:
         i = next(md.disasm(img.read(a, 6), a), None)
