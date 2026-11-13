@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 #include "com.h"
 #include "options_menu.h"
@@ -49,22 +50,43 @@ static int32_t g_max[8] = {65535, 65535, 65535, 65535, 65535, 65535, 65535, 6553
 static u64 g_buttons = 0;
 static HidAnalogStickState g_lstick, g_rstick;
 
-static void poll(void) {
+static pthread_mutex_t s_poll_mutex = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t s_last_poll_us = 0;
+static u64 s_prev_buttons = 0;
+static int s_minus_was_down = 0;
+
+void input_poll(void) {
+    pthread_mutex_lock(&s_poll_mutex);
+    uint64_t now_us = armTicksToNs(armGetSystemTick()) / 1000ull;
+    /* Rate limit to at most once per 2ms */
+    if (s_last_poll_us != 0 && (now_us - s_last_poll_us < 2000ull)) {
+        pthread_mutex_unlock(&s_poll_mutex);
+        return;
+    }
+    s_last_poll_us = now_us;
+
     padUpdate(&pad);
-    u64 kDown = padGetButtonsDown(&pad);
-    g_buttons = padGetButtons(&pad);
+    u64 cur_buttons = padGetButtons(&pad);
+    u64 kDown = padGetButtonsDown(&pad) | (cur_buttons & ~s_prev_buttons);
+    s_prev_buttons = cur_buttons;
+    g_buttons = cur_buttons;
     g_lstick = padGetStickPos(&pad, 0);
     g_rstick = padGetStickPos(&pad, 1);
 
-    if (kDown & HidNpadButton_Minus) {
+    int minus_down = (cur_buttons & HidNpadButton_Minus) != 0;
+    if (minus_down && !s_minus_was_down) {
         options_menu_toggle();
-    } else if (options_menu_is_open()) {
+    }
+    s_minus_was_down = minus_down;
+
+    if (options_menu_is_open()) {
         options_menu_update(kDown, g_buttons, g_lstick.x, g_lstick.y);
         g_buttons = 0;
         g_lstick.x = g_lstick.y = 0;
         g_rstick.x = g_rstick.y = 0;
         memset(g_keys, 0, sizeof g_keys);
         memset(g_mouse, 0, sizeof g_mouse);
+        pthread_mutex_unlock(&s_poll_mutex);
         return;
     }
 
@@ -91,7 +113,11 @@ static void poll(void) {
     /* Mouse buttons: disabled for Joy-Cons so R/ZR and L/ZL operate purely as controller buttons */
     g_mouse[0] = 0;
     g_mouse[1] = 0;
+
+    pthread_mutex_unlock(&s_poll_mutex);
 }
+
+#define poll input_poll
 
 static int dev_kind(Ctx* c) { return (int)LD32(ARG(0) + 8); }
 

@@ -13,6 +13,7 @@ int options_menu_is_open(void);
 void options_menu_toggle(void);
 void options_menu_update(uint64_t kDown, uint64_t kHeld, int32_t lx, int32_t ly);
 void options_menu_render(uint32_t screen_w, uint32_t screen_h);
+void input_poll(void);
 
 /* Settings queries */
 float options_get_density(void);

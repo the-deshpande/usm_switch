@@ -167,14 +167,18 @@ float options_get_view_distance(void) {
 }
 
 int options_get_fps_cap(void) {
-    static const int c[] = {20, 30, 60};
+    static const int c[] = {30, 60, 0};
     int idx = s_perf_rows[0].cur;
-    if (idx < 0 || idx >= 3) idx = 1;
+    if (idx < 0 || idx >= 3) idx = 0;
     return c[idx];
 }
 
 int options_get_frame_gen(void) {
-    return s_perf_rows[1].cur;
+    int fg = s_perf_rows[1].cur;
+    if (fg == 0 && s_perf_rows[0].cur == 1) {
+        return 1;
+    }
+    return fg;
 }
 
 int options_get_vsync(void) {
@@ -603,24 +607,11 @@ static void draw_text(float x, float y, float scale, const char* str, float r, f
     }
 }
 
-static void restore_gl_state(GLint prev_prog, GLint prev_vbo, GLint prev_active_tex, GLint prev_tex,
-                             const GLint* prev_vp,
-                             GLboolean prev_blend, GLint prev_blend_src_rgb, GLint prev_blend_dst_rgb,
-                             GLint prev_blend_src_a, GLint prev_blend_dst_a,
-                             GLint prev_blend_eq_rgb, GLint prev_blend_eq_a,
-                             GLboolean prev_depth, GLboolean prev_cull, GLboolean prev_scissor) {
-    if (prev_blend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
-    glBlendFuncSeparate(prev_blend_src_rgb, prev_blend_dst_rgb, prev_blend_src_a, prev_blend_dst_a);
-    glBlendEquationSeparate(prev_blend_eq_rgb, prev_blend_eq_a);
-    if (prev_depth) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
-    if (prev_cull) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
-    if (prev_scissor) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
-    glViewport(prev_vp[0], prev_vp[1], prev_vp[2], prev_vp[3]);
-    glUseProgram(prev_prog);
-    glBindBuffer(GL_ARRAY_BUFFER, prev_vbo);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, prev_tex);
-    glActiveTexture(prev_active_tex);
+static void cleanup_gui_gl_state(void) {
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+    glUseProgram(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
     gl_bind_main_vao();
 }
 
@@ -640,29 +631,6 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     if (!g_open && !options_show_fps()) return;
 
     init_gui_gl();
-
-    /* Save comprehensive GL state */
-    GLint prev_prog = 0, prev_vbo = 0, prev_active_tex = GL_TEXTURE0, prev_tex = 0;
-    GLint prev_vp[4] = {0, 0, (GLint)screen_w, (GLint)screen_h};
-    GLint prev_blend_src_rgb = GL_ONE, prev_blend_dst_rgb = GL_ZERO;
-    GLint prev_blend_src_a = GL_ONE, prev_blend_dst_a = GL_ZERO;
-    GLint prev_blend_eq_rgb = GL_FUNC_ADD, prev_blend_eq_a = GL_FUNC_ADD;
-
-    glGetIntegerv(GL_CURRENT_PROGRAM, &prev_prog);
-    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prev_vbo);
-    glGetIntegerv(GL_ACTIVE_TEXTURE, &prev_active_tex);
-    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prev_tex);
-    glGetIntegerv(GL_VIEWPORT, prev_vp);
-    glGetIntegerv(GL_BLEND_SRC_RGB, &prev_blend_src_rgb);
-    glGetIntegerv(GL_BLEND_DST_RGB, &prev_blend_dst_rgb);
-    glGetIntegerv(GL_BLEND_SRC_ALPHA, &prev_blend_src_a);
-    glGetIntegerv(GL_BLEND_DST_ALPHA, &prev_blend_dst_a);
-    glGetIntegerv(GL_BLEND_EQUATION_RGB, &prev_blend_eq_rgb);
-    glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &prev_blend_eq_a);
-    GLboolean prev_blend = glIsEnabled(GL_BLEND);
-    GLboolean prev_depth = glIsEnabled(GL_DEPTH_TEST);
-    GLboolean prev_cull = glIsEnabled(GL_CULL_FACE);
-    GLboolean prev_scissor = glIsEnabled(GL_SCISSOR_TEST);
 
     glBindVertexArray(s_vao);
     glViewport(0, 0, screen_w, screen_h);
@@ -695,20 +663,12 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
             draw_text(screen_w - 132.0f, 20.0f, 0.75f, fps_str, 0.3f, 1.0f, 0.4f, 1.0f);
         }
         flush_verts(1);
-        restore_gl_state(prev_prog, prev_vbo, prev_active_tex, prev_tex, prev_vp,
-                         prev_blend, prev_blend_src_rgb, prev_blend_dst_rgb,
-                         prev_blend_src_a, prev_blend_dst_a,
-                         prev_blend_eq_rgb, prev_blend_eq_a,
-                         prev_depth, prev_cull, prev_scissor);
+        cleanup_gui_gl_state();
         return;
     }
 
     if (!g_open) {
-        restore_gl_state(prev_prog, prev_vbo, prev_active_tex, prev_tex, prev_vp,
-                         prev_blend, prev_blend_src_rgb, prev_blend_dst_rgb,
-                         prev_blend_src_a, prev_blend_dst_a,
-                         prev_blend_eq_rgb, prev_blend_eq_a,
-                         prev_depth, prev_cull, prev_scissor);
+        cleanup_gui_gl_state();
         return;
     }
 
@@ -802,9 +762,5 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
 
     flush_verts(1);
 
-    restore_gl_state(prev_prog, prev_vbo, prev_active_tex, prev_tex, prev_vp,
-                     prev_blend, prev_blend_src_rgb, prev_blend_dst_rgb,
-                     prev_blend_src_a, prev_blend_dst_a,
-                     prev_blend_eq_rgb, prev_blend_eq_a,
-                     prev_depth, prev_cull, prev_scissor);
+    cleanup_gui_gl_state();
 }

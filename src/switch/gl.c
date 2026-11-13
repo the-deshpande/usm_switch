@@ -536,12 +536,12 @@ static void present_(void) {
 
     pace();
 
-    ensure_frame_textures(SWITCH_SCREEN_W, SWITCH_SCREEN_H);
     int cap = options_get_fps_cap();
     int fg = options_get_frame_gen();
     int fxaa = options_get_fxaa();
     int sharp = options_get_sharpen();
     int vsync = options_get_vsync();
+    int need_post_or_fg = (fg > 0 || fxaa > 0 || sharp > 0);
 
     /* Dynamically apply VSync setting if changed */
     static int s_cur_vsync = -1;
@@ -550,28 +550,41 @@ static void present_(void) {
         eglSwapInterval(s_display, vsync ? 1 : 0);
     }
 
-    /* Copy rendered framebuffer into ping-pong frame texture */
-    s_cur_frame_idx ^= 1;
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, s_frame_textures[s_cur_frame_idx]);
-    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, SWITCH_SCREEN_W, SWITCH_SCREEN_H);
-    s_frame_textures_ready++;
+    if (need_post_or_fg) {
+        ensure_frame_textures(SWITCH_SCREEN_W, SWITCH_SCREEN_H);
 
-    /* If Post-Processing (FXAA or Sharpening) is active, pass through s_post_prog */
-    if ((fxaa > 0 || sharp > 0) && s_post_prog) {
-        glViewport(0, 0, SWITCH_SCREEN_W, SWITCH_SCREEN_H);
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
-        glDisable(GL_BLEND);
-        glDisable(GL_SCISSOR_TEST);
-        glUseProgram(s_post_prog);
-        glUniform1i(glGetUniformLocation(s_post_prog, "u_tex"), 0);
-        glUniform2f(glGetUniformLocation(s_post_prog, "u_inv_res"), 1.0f / (float)SWITCH_SCREEN_W, 1.0f / (float)SWITCH_SCREEN_H);
-        glUniform1i(glGetUniformLocation(s_post_prog, "u_fxaa_level"), fxaa);
-        glUniform1i(glGetUniformLocation(s_post_prog, "u_sharpen_mode"), sharp);
-        glBindVertexArray(g_main_vao);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        /* Copy rendered framebuffer into ping-pong frame texture */
+        s_cur_frame_idx ^= 1;
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, s_frame_textures[s_cur_frame_idx]);
+        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, SWITCH_SCREEN_W, SWITCH_SCREEN_H);
+        s_frame_textures_ready++;
+
+        /* If Post-Processing (FXAA or Sharpening) is active, pass through s_post_prog */
+        if ((fxaa > 0 || sharp > 0) && s_post_prog) {
+            glViewport(0, 0, SWITCH_SCREEN_W, SWITCH_SCREEN_H);
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_CULL_FACE);
+            glDisable(GL_BLEND);
+            glDisable(GL_SCISSOR_TEST);
+            glUseProgram(s_post_prog);
+            glUniform1i(glGetUniformLocation(s_post_prog, "u_tex"), 0);
+            glUniform2f(glGetUniformLocation(s_post_prog, "u_inv_res"), 1.0f / (float)SWITCH_SCREEN_W, 1.0f / (float)SWITCH_SCREEN_H);
+            glUniform1i(glGetUniformLocation(s_post_prog, "u_fxaa_level"), fxaa);
+            glUniform1i(glGetUniformLocation(s_post_prog, "u_sharpen_mode"), sharp);
+            glBindVertexArray(g_main_vao);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+        }
+    } else {
+        if (s_frame_textures[0]) {
+            glDeleteTextures(2, s_frame_textures);
+            s_frame_textures[0] = s_frame_textures[1] = 0;
+        }
+        s_frame_textures_ready = 0;
     }
+
+    /* Poll input for menu & controller right before rendering overlay */
+    input_poll();
 
     /* Render Options Menu overlay on real frame */
     options_record_real_frame();
