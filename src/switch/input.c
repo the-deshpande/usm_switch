@@ -88,9 +88,9 @@ static void poll(void) {
     KEY(K_M, g_buttons & HidNpadButton_StickL);
 #undef KEY
 
-    /* Mouse buttons for QTEs */
-    g_mouse[0] = (g_buttons & (HidNpadButton_L | HidNpadButton_ZL)) ? 0x80 : 0;
-    g_mouse[1] = (g_buttons & (HidNpadButton_R | HidNpadButton_ZR)) ? 0x80 : 0;
+    /* Mouse buttons: disabled for Joy-Cons so R/ZR and L/ZL operate purely as controller buttons */
+    g_mouse[0] = 0;
+    g_mouse[1] = 0;
 }
 
 static int dev_kind(Ctx* c) { return (int)LD32(ARG(0) + 8); }

@@ -52,10 +52,10 @@ static void reg_load(void) {
     reg_defaults();
     if (g_reg_dirty) reg_save();
 }
-/* the Vita's defaults for the detail options, as the in-game Options menu writes them; less to draw = less game work */
+/* the Switch defaults for the detail options, as the in-game Options menu writes them */
 static void reg_defaults(void) {
     static const struct { const char* name; uint32_t type, size; const char* data; } D[] = {
-        {"Resolution", 1, 8, "960x544"},  /* the screen's own size */
+        {"Resolution", 1, 9, "1280x720"},  /* Switch native 720p internal resolution */
         {"DetailedShadows", 4, 4, "\0\0\0\0"},
         {"DistanceClipping", 4, 4, "\1\0\0\0"},
         {"Distance", 4, 4, "\1\0\0\0"},
@@ -69,6 +69,13 @@ static void reg_defaults(void) {
         if (!v) v = &g_reg[g_nreg++];
         strcpy(v->path, p), v->type = D[i].type, v->size = D[i].size;
         memcpy(v->data, D[i].data, D[i].size);
+    }
+    /* Upgrade older 960x544 resolution defaults to native 1280x720 */
+    RegVal* r_res = reg_find("HKCU\\Software\\Activision\\Ultimate Spider-Man\\Settings\\Resolution");
+    if (r_res && strcmp((char*)r_res->data, "960x544") == 0) {
+        strcpy((char*)r_res->data, "1280x720");
+        r_res->size = 9;
+        g_reg_dirty = 1;
     }
     /* ux0:data/usm/language.txt (the Settings menu): 0 English .. 4 Italian, the game's own Settings\Language, read at
        start: its text comes from Data/usm_lt<letter>.usm, which only that language's PC install has. Missing: English */
@@ -86,11 +93,11 @@ static void reg_defaults(void) {
         if (!v && g_nreg < 256) v = &g_reg[g_nreg++], strcpy(v->path, path);
         if (v) v->type = 4, v->size = 4, memset(v->data, 0, 4), v->data[0] = (uint8_t)n;
     }
-    /* ux0:data/usm/resolution.txt ("640x362"): the 3D resolution, over whatever the Options menu saved (read at start) */
+    /* sdmc:/switch/usm/resolution.txt ("1280x720"): the 3D resolution, over whatever the Options menu saved (read at start) */
     FILE* rf = fopen(USM_DIR "resolution.txt", "r");
     unsigned rw, rh;
     if (rf) {
-        if (fscanf(rf, "%ux%u", &rw, &rh) == 2 && rw >= 160 && rw <= 960 && rh >= 90 && rh <= 544) {
+        if (fscanf(rf, "%ux%u", &rw, &rh) == 2 && rw >= 160 && rw <= 1920 && rh >= 90 && rh <= 1080) {
             static const char* path = "HKCU\\Software\\Activision\\Ultimate Spider-Man\\Settings\\Resolution";
             RegVal* v = reg_find(path);
             if (!v && g_nreg < 256) v = &g_reg[g_nreg++], strcpy(v->path, path);
@@ -100,7 +107,7 @@ static void reg_defaults(void) {
                 g_mode_extra[0] = rw, g_mode_extra[1] = rh;
                 vlog("resolution.txt: %ux%u\n", rw, rh);
             }
-        } else vlog("resolution.txt: want e.g. 640x362 (160x90 to 960x544)\n");
+        } else vlog("resolution.txt: want e.g. 1280x720 (160x90 to 1920x1080)\n");
         fclose(rf);
     }
     /* the game's own far clip: Settings\Distance D ends its fog at 100 + 19 D (D 1: 119 m), anything past that is not drawn. A
@@ -262,7 +269,7 @@ static void RegSetValueExA_(Ctx* c) {  /* (key, name, res, type, data, size) */
             g_reg_dirty = 1;
             /* the in-game Options choose a resolution too: resolution.txt, which wins at start, follows it */
             unsigned rw, rh;
-            if (strstr(p, "Settings\\Resolution") && sscanf((const char*)v->data, "%ux%u", &rw, &rh) == 2 && rw >= 160 && rw <= 960 && rh >= 90 && rh <= 544) {
+            if (strstr(p, "Settings\\Resolution") && sscanf((const char*)v->data, "%ux%u", &rw, &rh) == 2 && rw >= 160 && rw <= 1920 && rh >= 90 && rh <= 1080) {
                 FILE* rf = fopen(USM_DIR "resolution.txt", "w");
                 if (rf) fprintf(rf, "%ux%u", rw, rh), fclose(rf);
             }

@@ -18,6 +18,7 @@
 
 #include "usm_switch.h"
 #include "switch_util.h"
+#include "options_menu.h"
 
 #define S(i) ((char*)H(ARG(i)))
 #define INVALID_HANDLE 0xffffffffu
@@ -618,7 +619,8 @@ static void GetProcAddress_(Ctx* c) {
 }
 static void OutputDebugStringA_(Ctx* c) { vlog("[debug] %s", S(0)); }
 static void ExitProcess_(Ctx* c) {
-    vlog("ExitProcess(%d)\n", (int)ARG(0));
+    vlog("ExitProcess(%d) called: exiting NRO cleanly to Horizon OS\n", (int)ARG(0));
+    options_menu_cleanup();
     exit((int)ARG(0));
 }
 

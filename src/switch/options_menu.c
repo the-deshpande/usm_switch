@@ -31,7 +31,7 @@ static MenuRow s_graphics_rows[] = {
     {"View distance", 2, 6, {"80 m", "100 m", "120 m (Default)", "150 m", "200 m", "Max (Far City)"}, "City view distance before fog"},
     {"Far city fog", 1, 2, {"Off", "On"}, "Show distance fog over Manhattan"},
     {"Particle detail", 1, 3, {"Low", "Medium (Default)", "High"}, "Smoke, fire, and explosion effects"},
-    {"Resolution mode", 0, 2, {"720p Display (960x544 base)", "1080p Enhanced (WIP)"}, "Internal rendering target resolution"}
+    {"Resolution mode", 0, 4, {"Native 720p (1280x720) [Crisp]", "1080p Docked (1920x1080)", "Performance 544p (960x544)", "Low 480p (640x480)"}, "Internal 3D rendering resolution"}
 };
 
 static MenuRow s_controls_rows[] = {
@@ -57,6 +57,8 @@ static MenuRow s_perf_rows[] = {
     {"Frame rate cap", 1, 3, {"20 FPS", "30 FPS (Stock)", "60 FPS (Fast)"}, "Target game update rate"},
     {"Display sync (VSync)", 1, 2, {"Off", "On (Double-buffered)"}, "Synchronize frame presentation"},
     {"FPS Counter", 0, 2, {"Hidden", "Visible"}, "On-screen frame rate overlay"},
+    {"GPU Performance Profile", 0, 3, {"Stock (307 MHz)", "Boost (384 MHz)", "High (460 MHz)"}, "Official Nintendo GPU clock profile"},
+    {"CPU Overclock", 0, 4, {"Stock (1020 MHz)", "Boost (1224 MHz)", "High (1581 MHz)", "Max (1785 MHz)"}, "CPU clock speed (clkrst)"},
     {"Pedestrian & Traffic", 2, 5, {"None", "Very Low", "Medium (Default)", "High", "Full (PC)"}, "City traffic and pedestrians density"}
 };
 
@@ -97,9 +99,60 @@ void options_menu_toggle(void) { g_open = !g_open; }
 
 float options_get_density(void) {
     static const float d[] = {0.0f, 0.2f, 0.5f, 0.8f, 1.0f};
-    int idx = s_perf_rows[3].cur;
+    int idx = s_perf_rows[5].cur;
     if (idx < 0 || idx >= 5) idx = 2;
     return d[idx];
+}
+
+static bool s_apm_inited = false;
+static bool s_clkrst_inited = false;
+static ClkrstSession s_clk_cpu;
+
+void options_apply_gpu_profile(int idx) {
+    static const u32 configs[] = {0x00020003, 0x00020004, 0x92220008};
+    if (idx < 0 || idx >= 3) idx = 0;
+    if (!s_apm_inited) {
+        if (R_SUCCEEDED(apmInitialize())) s_apm_inited = true;
+    }
+    if (s_apm_inited) {
+        Result rc = apmSetPerformanceConfiguration(ApmPerformanceMode_Normal, configs[idx]);
+        vlog("options: GPU profile %d (0x%08x): rc 0x%x\n", idx, configs[idx], (unsigned)rc);
+    }
+}
+
+void options_apply_cpu_clock(int idx) {
+    static const u32 freqs[] = {1020000000u, 1224000000u, 1581000000u, 1785000000u};
+    if (idx < 0 || idx >= 4) idx = 0;
+    if (!s_clkrst_inited) {
+        if (hosversionAtLeast(8, 0, 0) && R_SUCCEEDED(clkrstInitialize())) {
+            if (R_SUCCEEDED(clkrstOpenSession(&s_clk_cpu, PcvModuleId_CpuBus, 3))) {
+                s_clkrst_inited = true;
+            }
+        }
+    }
+    if (s_clkrst_inited) {
+        Result rc = clkrstSetClockRate(&s_clk_cpu, freqs[idx]);
+        u32 actual = 0;
+        clkrstGetClockRate(&s_clk_cpu, &actual);
+        vlog("options: CPU clock set to %u MHz (rc 0x%x, actual %.1f MHz)\n",
+             (unsigned)(freqs[idx] / 1000000u), (unsigned)rc, actual / 1e6);
+    }
+}
+
+void options_menu_cleanup(void) {
+    if (s_clkrst_inited) {
+        clkrstSetClockRate(&s_clk_cpu, 1020000000u);
+        clkrstCloseSession(&s_clk_cpu);
+        clkrstExit();
+        s_clkrst_inited = false;
+        vlog("options: CPU clock restored to stock (1020 MHz)\n");
+    }
+    if (s_apm_inited) {
+        apmSetPerformanceConfiguration(ApmPerformanceMode_Normal, 0x00020003);
+        apmExit();
+        s_apm_inited = false;
+        vlog("options: GPU profile restored to stock (307 MHz)\n");
+    }
 }
 
 float options_get_view_distance(void) {
@@ -168,7 +221,9 @@ static void reset_defaults(void) {
     s_perf_rows[0].cur = 1; /* 30 FPS (Stock) */
     s_perf_rows[1].cur = 1; /* On (Double-buffered) */
     s_perf_rows[2].cur = 0; /* Hidden */
-    s_perf_rows[3].cur = 2; /* Medium (Default) */
+    s_perf_rows[3].cur = 0; /* Stock (307 MHz) */
+    s_perf_rows[4].cur = 0; /* Stock (1020 MHz) */
+    s_perf_rows[5].cur = 2; /* Medium (Default) */
 
     s_qol_rows[0].cur = 0; /* Off */
     s_qol_rows[1].cur = 0; /* Off */
@@ -182,14 +237,24 @@ static void reset_defaults(void) {
 }
 
 static void save_settings(void) {
+    /* Save resolution choice to resolution.txt */
+    static const char* kResNames[] = {"1280x720", "1920x1080", "960x544", "640x480"};
+    int r_idx = s_graphics_rows[3].cur;
+    if (r_idx >= 0 && r_idx < 4) {
+        FILE* rf = fopen(USM_DIR "resolution.txt", "w");
+        if (rf) {
+            fprintf(rf, "%s\n", kResNames[r_idx]);
+            fclose(rf);
+        }
+    }
     FILE* f = fopen(USM_DIR "settings.ini", "w");
     if (!f) return;
     fprintf(f, "[graphics]\nview_dist=%d\nfog=%d\nparticles=%d\nres=%d\n\n",
             s_graphics_rows[0].cur, s_graphics_rows[1].cur, s_graphics_rows[2].cur, s_graphics_rows[3].cur);
     fprintf(f, "[controls]\ninvert_x=%d\ninvert_y=%d\nsens=%d\nrumble=%d\nswap_ab=%d\n\n",
             s_controls_rows[0].cur, s_controls_rows[1].cur, s_controls_rows[2].cur, s_controls_rows[3].cur, s_controls_rows[4].cur);
-    fprintf(f, "[performance]\nfps_cap=%d\nvsync=%d\nshow_fps=%d\ndensity=%d\n\n",
-            s_perf_rows[0].cur, s_perf_rows[1].cur, s_perf_rows[2].cur, s_perf_rows[3].cur);
+    fprintf(f, "[performance]\nfps_cap=%d\nvsync=%d\nshow_fps=%d\ngpu_profile=%d\ncpu_clock=%d\ndensity=%d\n\n",
+            s_perf_rows[0].cur, s_perf_rows[1].cur, s_perf_rows[2].cur, s_perf_rows[3].cur, s_perf_rows[4].cur, s_perf_rows[5].cur);
     fprintf(f, "[qol]\nskip_intro=%d\nfast_map=%d\n\n",
             s_qol_rows[0].cur, s_qol_rows[1].cur);
     fprintf(f, "[debug]\nwireframe=%d\nlog=%d\n",
@@ -228,8 +293,12 @@ static void load_settings(void) {
             if (v >= 0 && v < s_perf_rows[1].num_opts) s_perf_rows[1].cur = v;
         } else if (sscanf(line, "show_fps=%d", &v) == 1) {
             if (v >= 0 && v < s_perf_rows[2].num_opts) s_perf_rows[2].cur = v;
-        } else if (sscanf(line, "density=%d", &v) == 1) {
+        } else if (sscanf(line, "gpu_profile=%d", &v) == 1) {
             if (v >= 0 && v < s_perf_rows[3].num_opts) s_perf_rows[3].cur = v;
+        } else if (sscanf(line, "cpu_clock=%d", &v) == 1) {
+            if (v >= 0 && v < s_perf_rows[4].num_opts) s_perf_rows[4].cur = v;
+        } else if (sscanf(line, "density=%d", &v) == 1) {
+            if (v >= 0 && v < s_perf_rows[5].num_opts) s_perf_rows[5].cur = v;
         } else if (sscanf(line, "skip_intro=%d", &v) == 1) {
             if (v >= 0 && v < s_qol_rows[0].num_opts) s_qol_rows[0].cur = v;
         } else if (sscanf(line, "fast_map=%d", &v) == 1) {
@@ -248,6 +317,8 @@ static void init_gui_gl(void);
 void options_menu_init(void) {
     reset_defaults();
     load_settings();
+    options_apply_gpu_profile(s_perf_rows[3].cur);
+    options_apply_cpu_clock(s_perf_rows[4].cur);
     init_gui_gl();
 }
 
@@ -283,20 +354,26 @@ void options_menu_update(uint64_t kDown, uint64_t kHeld, int32_t lx, int32_t ly)
     if (kDown & (HidNpadButton_Left | HidNpadButton_StickLLeft)) {
         if (r->num_opts > 1) {
             r->cur = (r->cur + r->num_opts - 1) % r->num_opts;
+            if (g_tab == TAB_PERF && g_row == 3) options_apply_gpu_profile(r->cur);
+            if (g_tab == TAB_PERF && g_row == 4) options_apply_cpu_clock(r->cur);
         }
     }
     if (kDown & (HidNpadButton_Right | HidNpadButton_StickLRight | HidNpadButton_A)) {
         if (g_tab == TAB_SYSTEM && g_row == 0) {
             save_settings();
-            s_status_msg = "Settings saved to SD (settings.ini)";
+            s_status_msg = "Settings saved to SD (settings.ini & resolution.txt)";
             s_status_timer = 120;
         } else if (g_tab == TAB_SYSTEM && g_row == 1) {
             remove(USM_DIR "settings.ini");
             reset_defaults();
+            options_apply_gpu_profile(s_perf_rows[3].cur);
+            options_apply_cpu_clock(s_perf_rows[4].cur);
             s_status_msg = "Player defaults restored";
             s_status_timer = 120;
         } else if (r->num_opts > 1) {
             r->cur = (r->cur + 1) % r->num_opts;
+            if (g_tab == TAB_PERF && g_row == 3) options_apply_gpu_profile(r->cur);
+            if (g_tab == TAB_PERF && g_row == 4) options_apply_cpu_clock(r->cur);
         }
     }
 }

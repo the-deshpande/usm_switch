@@ -771,7 +771,7 @@ static void d3d_GetAdapterIdentifier(Ctx* c) {  /* D3DADAPTER_IDENTIFIER9, 1100 
 }
 /* the options screen looks the running mode (800x600) up in this list, so it needs the usual PC modes */
 uint32_t g_mode_extra[2];  /* resolution.txt's size (shims_misc.c), listed last */
-static const uint32_t MODES[][2] = {{640, 480}, {800, 600}, {1024, 768}, {1280, 720}, {1280, 960}, {960, 544}, {720, 408}, {640, 362}, {480, 272}};
+static const uint32_t MODES[][2] = {{640, 480}, {800, 600}, {1024, 768}, {1280, 720}, {1920, 1080}, {1280, 960}, {960, 544}, {720, 408}, {640, 362}, {480, 272}};
 #define NMODES (sizeof MODES / sizeof *MODES + (g_mode_extra[0] != 0))
 static void d3d_GetAdapterModeCount(Ctx* c) { c->eax = NMODES; }
 static void d3d_EnumAdapterModes(Ctx* c) {  /* (adapter, format, mode, D3DDISPLAYMODE*) */

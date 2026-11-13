@@ -1,7 +1,9 @@
 /* USER32: there is no window on the Vita. The game gets a fake one the size of the screen and an empty message queue. */
 
 
+#include <stdlib.h>
 #include "usm_switch.h"
+#include "options_menu.h"
 
 #define S(i) ((char*)H(ARG(i)))
 #define HWND_MAIN 0x2000u
@@ -46,6 +48,11 @@ static void PtInRect_(Ctx* c) {  /* (rect*, POINT by value: x, y) */
     c->eax = x >= l && x < (int32_t)LD32(ARG(0) + 8) && y >= t && y < (int32_t)LD32(ARG(0) + 12);
 }
 static void Hwnd_(Ctx* c) { c->eax = HWND_MAIN; }
+static void PostQuitMessage_(Ctx* c) {
+    vlog("PostQuitMessage(%d) called: exiting NRO cleanly to Horizon OS\n", (int)ARG(0));
+    options_menu_cleanup();
+    exit((int)ARG(0));
+}
 
 const ShimDef shims_user32[] = {
     {"GetCursorPos", GetCursorPos_}, {"PtInRect", PtInRect_}, {"IsWindow", True_}, {"GetAsyncKeyState", Zero_},
@@ -60,7 +67,7 @@ const ShimDef shims_user32[] = {
     {"LoadCursorA", True_}, {"TranslateMessage", True_}, {"DispatchMessageA", Zero_}, {"SetFocus", True_},
     {"GetKeyboardState", GetKeyboardState_}, {"MapVirtualKeyA", Zero_}, {"MessageBoxA", MessageBoxA_},
     {"GetForegroundWindow", GetForegroundWindow_}, {"GetActiveWindow", GetForegroundWindow_},
-    {"DestroyWindow", True_}, {"PostQuitMessage", Zero_}, {"SetWindowLongA", Zero_}, {"GetWindowLongA", Zero_},
+    {"DestroyWindow", True_}, {"PostQuitMessage", PostQuitMessage_}, {"SetWindowLongA", Zero_}, {"GetWindowLongA", Zero_},
     {"AdjustWindowRect", True_}, {"AdjustWindowRectEx", True_}, {"ScreenToClient", True_},
     {NULL, NULL},
 };

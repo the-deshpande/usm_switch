@@ -2,8 +2,8 @@
 #pragma once
 #include "com.h"
 
-#define W 640
-#define HGT 480
+#define W 1280
+#define HGT 720
 #define FMT_X8R8G8B8 22
 #define FMT_D24S8 75
 

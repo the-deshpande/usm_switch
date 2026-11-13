@@ -13,6 +13,7 @@
 #include <switch.h>
 
 #include "usm_switch.h"
+#include "options_menu.h"
 
 #define IMAGE_SIZE 0x5ea060u
 
@@ -209,6 +210,7 @@ int main(int argc, char* argv[]) {
     }
 
     vlog("=== usm_switch ended cleanly ===\n");
+    options_menu_cleanup();
     romfsExit();
     return 0;
 }

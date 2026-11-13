@@ -8,6 +8,7 @@ extern "C" {
 void gl_bind_main_vao(void);
 
 void options_menu_init(void);
+void options_menu_cleanup(void);
 int options_menu_is_open(void);
 void options_menu_toggle(void);
 void options_menu_update(uint64_t kDown, uint64_t kHeld, int32_t lx, int32_t ly);
