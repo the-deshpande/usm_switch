@@ -41,7 +41,7 @@ enum {
 enum { DEV_KEYBOARD = 1, DEV_MOUSE = 2, DEV_PAD = 3 };
 #define PAD_GUID 0x53574954u  /* "SWIT": Switch gamepad instance GUID */
 
-static uint8_t g_keys[256], g_prev[256], g_mouse[2], g_mprev[2];
+static uint8_t g_keys[256], g_prev[256], g_mouse[2], g_mprev[2], g_pad_prev[16];
 static uint32_t g_seq = 0;
 static int32_t g_min[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 static int32_t g_max[8] = {65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535};
@@ -70,7 +70,7 @@ static void poll(void) {
 
     memset(g_keys, 0, sizeof g_keys);
 #define KEY(k, on) do { if (on) g_keys[k] = 0x80; } while (0)
-    /* D-pad & Left Stick navigation for menus and keyboard movement */
+    /* D-pad & Left Stick navigation for menus */
     int up = (g_buttons & (HidNpadButton_Up | HidNpadButton_StickLUp)) || (g_lstick.y > 16000);
     int dn = (g_buttons & (HidNpadButton_Down | HidNpadButton_StickLDown)) || (g_lstick.y < -16000);
     int lf = (g_buttons & (HidNpadButton_Left | HidNpadButton_StickLLeft)) || (g_lstick.x < -16000);
@@ -81,23 +81,11 @@ static void poll(void) {
     KEY(K_LEFT, lf);
     KEY(K_RIGHT, rt);
 
-    KEY(K_W, up);
-    KEY(K_S, dn);
-    KEY(K_A, lf);
-    KEY(K_D, rt);
+    /* Menu escape (Plus button) */
+    KEY(K_ESC, g_buttons & HidNpadButton_Plus);
 
-    /* Menu confirmation / selection / pause / map */
-    KEY(K_RETURN, g_buttons & (HidNpadButton_A | HidNpadButton_B));
-    KEY(K_SPACE,  g_buttons & (HidNpadButton_B | HidNpadButton_A));
-    KEY(K_ESC,    g_buttons & HidNpadButton_Plus);
-    KEY(K_BACK,   g_buttons & HidNpadButton_B);
-    KEY(K_M,      g_buttons & (HidNpadButton_StickL | HidNpadButton_Minus));
-
-    /* Actions on keyboard */
-    KEY(K_Q, g_buttons & HidNpadButton_Y);  /* Punch */
-    KEY(K_E, g_buttons & HidNpadButton_X);  /* Kick */
-    KEY(K_LSHIFT, g_buttons & (HidNpadButton_L | HidNpadButton_ZL));  /* Zip */
-    KEY(K_RSHIFT, g_buttons & (HidNpadButton_R | HidNpadButton_ZR));  /* Web */
+    /* In-game map fallback (Left Stick click) */
+    KEY(K_M, g_buttons & HidNpadButton_StickL);
 #undef KEY
 
     /* Mouse buttons for QTEs */
@@ -159,33 +147,35 @@ static void pad_state(uint32_t out, uint32_t cb) {
         ST32(out + 44, 0xffffffffu);
     }
 
-    /* Button mapping (matching table at 0x88da80 & shims_misc.c):
-       0: Jump (Cross / Switch B)
-       1: StickToWalls (Circle / Switch A)
-       2: Punch (Square / Switch Y)
-       3: Kick (Triangle / Switch X)
-       4: Web Zip (BlackButton3 / L | ZL)
-       5: Web Swing (ThrowWeb3 / R | ZR)
-       6: Select / Map (Minus)
-       7: Start / Pause (Plus)
-       8: Camera Center (StickR click)
+    /* Button mapping (Xbox Controller Standard Layout):
+       0: Button 1 (0x15) = Jump (Xbox A / Switch B)
+       1: Button 2 (0x16) = Wall Crawl / Web Action (Xbox B / Switch A)
+       2: Button 3 (0x17) = Punch (Xbox X / Switch Y)
+       3: Button 4 (0x18) = Kick (Xbox Y / Switch X)
+       4: Button 5 (0x19) = Web Zip (Xbox LB / Switch L, ZL)
+       5: Button 6 (0x1a) = Web Swing (Xbox RB / Switch R, ZR)
+       6: Button 7 (0x1b) = Unused
+       7: Button 8 (0x1c) = Pause (Xbox Start / Switch Plus)
+       8: Button 9 (0x1d) = In-game Map (Xbox Back / Switch StickL click)
+       9: Button 10 (0x1e) = Center Camera (Xbox RS click / Switch StickR click)
     */
     u64 btn_jump = options_get_swap_ab() ? HidNpadButton_A : HidNpadButton_B;
     u64 btn_act  = options_get_swap_ab() ? HidNpadButton_B : HidNpadButton_A;
 
-    const u64 map[] = {
+    const u64 map[10] = {
         btn_jump,
         btn_act,
         HidNpadButton_Y,
         HidNpadButton_X,
         HidNpadButton_L | HidNpadButton_ZL,
         HidNpadButton_R | HidNpadButton_ZR,
-        HidNpadButton_Minus,
+        0,
         HidNpadButton_Plus,
+        HidNpadButton_StickL,
         HidNpadButton_StickR
     };
     for (unsigned i = 0; i < sizeof map / sizeof *map && 48 + i < cb; i++) {
-        ST8(out + 48 + i, (g_buttons & map[i]) ? 0x80 : 0);
+        ST8(out + 48 + i, (map[i] && (g_buttons & map[i])) ? 0x80 : 0);
     }
 }
 
@@ -215,6 +205,35 @@ static void dev_GetDeviceData(Ctx* c) {
                 ST32(o + 12, ++g_seq);
             }
             if (!peek && (n < max || !out)) g_prev[k] = g_keys[k];
+            n++;
+        }
+    } else if (dev_kind(c) == DEV_PAD) {
+        poll();
+        u64 btn_jump = options_get_swap_ab() ? HidNpadButton_A : HidNpadButton_B;
+        u64 btn_act  = options_get_swap_ab() ? HidNpadButton_B : HidNpadButton_A;
+        const u64 map[10] = {
+            btn_jump,
+            btn_act,
+            HidNpadButton_Y,
+            HidNpadButton_X,
+            HidNpadButton_L | HidNpadButton_ZL,
+            HidNpadButton_R | HidNpadButton_ZR,
+            0,
+            HidNpadButton_Plus,
+            HidNpadButton_StickL,
+            HidNpadButton_StickR
+        };
+        for (unsigned i = 0; i < 10; i++) {
+            uint8_t state = (map[i] && (g_buttons & map[i])) ? 0x80 : 0;
+            if (state == g_pad_prev[i]) continue;
+            if (out && n < max) {
+                uint32_t o = out + n * sz;
+                memset(H(o), 0, sz);
+                ST32(o, 48u + i);       /* DIJOFS_BUTTON0 + i */
+                ST32(o + 4, state);     /* 0x80 or 0x00 */
+                ST32(o + 12, ++g_seq);
+            }
+            if (!peek && (n < max || !out)) g_pad_prev[i] = state;
             n++;
         }
     } else if (dev_kind(c) == DEV_MOUSE) {
@@ -288,7 +307,7 @@ static void dev_GetCapabilities(Ctx* c) {
     ST32(p + 4, 1);  /* DIDC_ATTACHED */
     ST32(p + 8, k == DEV_PAD ? 0x0215 : k == DEV_KEYBOARD ? 0x13 : 0x12);
     ST32(p + 12, k == DEV_PAD ? 4 : k == DEV_MOUSE ? 2 : 0);
-    ST32(p + 16, k == DEV_PAD ? 9 : k == DEV_MOUSE ? 3 : 128);
+    ST32(p + 16, k == DEV_PAD ? 10 : k == DEV_MOUSE ? 3 : 128);
     ST32(p + 20, k == DEV_PAD ? 1 : 0);
     vlog("GetCapabilities dev %u: type=0x%x axes=%u buttons=%u attached=1\n",
          k, LD32(p + 8), LD32(p + 12), LD32(p + 16));

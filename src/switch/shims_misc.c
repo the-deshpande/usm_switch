@@ -27,11 +27,13 @@ static pthread_mutex_t g_reg_m = PTHREAD_MUTEX_INITIALIZER;
 
 static RegVal* reg_find(const char* path);
 static void reg_defaults(void);
+static int g_reg_dirty;
+static void reg_save(void);
 static void reg_load(void) {
     if (g_nreg >= 0) return;
     g_nreg = 0;
     FILE* f = fopen(REG_FILE, "r");
-    if (!f) { reg_defaults(); return; }
+    if (!f) { reg_defaults(); reg_save(); return; }
     char line[800];
     while (g_nreg < 256 && fgets(line, sizeof line, f)) {
         RegVal* v = &g_reg[g_nreg];
@@ -48,6 +50,7 @@ static void reg_load(void) {
     }
     fclose(f);
     reg_defaults();
+    if (g_reg_dirty) reg_save();
 }
 /* the Vita's defaults for the detail options, as the in-game Options menu writes them; less to draw = less game work */
 static void reg_defaults(void) {
@@ -114,12 +117,28 @@ static void reg_defaults(void) {
     if (clip) clip->data[0] = view > 0;
     if (dist) dist->data[0] = view > 120 ? (uint8_t)((view * 1.25f - 100) / 19 + 1) : 1;
     /* pad bindings (the 3rd slot of each action, code | 3 << 16) for the actions USM.exe leaves without one, so the
-       Vita drives them as a gamepad (input.c buttons: 5 L, 6 R = codes 0x19, 0x1a; right
-       stick on Z = codes 5/6, Rz = 11/12). Set when missing or unbound (ffff), never over a binding the player chose. */
+       Switch gamepad drives all actions:
+       Button 1 (0x15): Jump
+       Button 2 (0x16): StickToWalls / Web Action
+       Button 3 (0x17): Punch
+       Button 4 (0x18): Kick
+       Button 5 (0x19): BlackButton (Web Zip, L / ZL)
+       Button 6 (0x1a): ThrowWeb (Web Swing, R / ZR)
+       Button 8 (0x1c): Pause (Plus)
+       Button 9 (0x1d): BackButton (Map, StickL click)
+       Button 10 (0x1e): CameraCenter (StickR click)
+       Camera axes: right stick on Z = codes 5/6, Rz = 11/12 */
     static const struct { const char* name; uint8_t code; } P[] = {
-        {"ThrowWeb3", 0x1a}, {"BlackButton3", 0x19}, {"CameraUp3", 0x0c}, {"CameraDown3", 0x0b},
-        {"CameraLeft3", 0x06}, {"CameraRight3", 0x05}, {"CameraCenter3", 0x1d},  /* 0x1d: rear touch (input.c) */
-    };  /* Pause and BackButton stay on Esc/M (input.c), which menus may also read directly */
+        {"ThrowWeb3", 0x1a},
+        {"BlackButton3", 0x19},
+        {"CameraUp3", 0x0c},
+        {"CameraDown3", 0x0b},
+        {"CameraLeft3", 0x06},
+        {"CameraRight3", 0x05},
+        {"CameraCenter3", 0x1e},
+        {"BackButton3", 0x1d},
+        {"Pause3", 0x1c},
+    };
     for (unsigned i = 0; i < sizeof P / sizeof *P; i++) {
 #ifdef USM_DEBUG
         if (getenv("VPC_NO_PAD_DEFAULTS")) break;  /* the game table (main.c) must be enough */
@@ -127,6 +146,19 @@ static void reg_defaults(void) {
         char p[200];
         snprintf(p, sizeof p, "HKCU\\Software\\Activision\\Ultimate Spider-Man\\Controls\\Player1\\%s", P[i].name);
         RegVal* v = reg_find(p);
+        /* Upgrade older defaults if needed */
+        if (v && strcmp(P[i].name, "CameraCenter3") == 0 && v->data[0] == 0x1d) {
+            v->data[0] = 0x1e;
+            g_reg_dirty = 1;
+        }
+        if (v && strcmp(P[i].name, "BackButton3") == 0 && (v->data[0] == 0xff || v->data[2] != 3)) {
+            v->data[0] = 0x1d; v->data[1] = 0; v->data[2] = 3; v->data[3] = 0;
+            g_reg_dirty = 1;
+        }
+        if (v && strcmp(P[i].name, "Pause3") == 0 && (v->data[0] == 0xff || v->data[2] != 3)) {
+            v->data[0] = 0x1c; v->data[1] = 0; v->data[2] = 3; v->data[3] = 0;
+            g_reg_dirty = 1;
+        }
         if (v && !(v->size == 4 && v->data[0] == 0xff && v->data[1] == 0xff)) continue;
         if (!v) {
             if (g_nreg >= 256) break;
@@ -135,9 +167,9 @@ static void reg_defaults(void) {
         }
         v->type = 4, v->size = 4;
         v->data[0] = P[i].code, v->data[1] = 0, v->data[2] = 3, v->data[3] = 0;
+        g_reg_dirty = 1;
     }
 }
-static int g_reg_dirty;
 static void reg_save(void) {
     FILE* f = fopen(REG_FILE, "w");
     if (!f) return;

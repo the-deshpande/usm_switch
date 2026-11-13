@@ -39,7 +39,18 @@ static MenuRow s_controls_rows[] = {
     {"Camera Invert Y", 0, 2, {"Normal", "Inverted"}, "Vertical camera pitch"},
     {"Stick Sensitivity", 2, 5, {"0.5x", "0.75x", "1.0x (Normal)", "1.25x", "1.5x"}, "Look stick sensitivity"},
     {"Vibration / Rumble", 1, 2, {"Off", "On"}, "HD Rumble feedback on hits & web swing"},
-    {"Swap A/B buttons", 0, 2, {"Off (B: Jump, A: Action)", "On (A: Jump, B: Action)"}, "Swap A and B button functions"}
+    {"Swap A/B buttons", 0, 2, {"Off (B: Jump, A: Action)", "On (A: Jump, B: Action)"}, "Swap A and B button functions"},
+    {"--- Controller Map ---", 0, 1, {"[ Xbox Layout ]"}, "Read-only gamepad button mapping reference"},
+    {"Button 1 (A/B)", 0, 1, {"Jump (Xbox A)"}, "Standard jump, release web swing, menu confirm"},
+    {"Button 2 (B/A)", 0, 1, {"Wall Crawl / Web (Xbox B)"}, "Stick to walls, wall crawl, sprint, menu cancel"},
+    {"Button 3 (Y)", 0, 1, {"Punch / Light (Xbox X)"}, "Punch, light attack combos"},
+    {"Button 4 (X)", 0, 1, {"Kick / Heavy (Xbox Y)"}, "Kick, heavy attack combos"},
+    {"Button 5 (L / ZL)", 0, 1, {"Web Zip (LB / LT)"}, "Quick web zip forward"},
+    {"Button 6 (R / ZR)", 0, 1, {"Web Swing (RB / RT)"}, "Web swing, shoot web"},
+    {"Button 8 (Plus)", 0, 1, {"Pause Game (Start)"}, "Pause menu and in-game options"},
+    {"Button 9 (LS Click)", 0, 1, {"Open Map (Back)"}, "In-game city map overview (Left Stick click)"},
+    {"Button 10 (RS Click)", 0, 1, {"Center Camera (R3)"}, "Reset camera behind Spider-Man (Right Stick click)"},
+    {"Minus (-)", 0, 1, {"SwitchWaker Overlay"}, "Toggle this settings overlay menu (exclusive)"}
 };
 
 static MenuRow s_perf_rows[] = {
@@ -581,8 +592,14 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     float tab_x = 80.0f + g_tab * tab_spacing;
     draw_rect(tab_x - 6.0f, 44.0f, tab_spacing - 8.0f, 46.0f, 0.18f, 0.38f, 0.72f, 0.95f);
 
-    /* Active row highlight */
-    float row_y = 120.0f + g_row * 42.0f;
+    /* Active row highlight with vertical scrolling */
+    int count = s_tab_counts[g_tab];
+    int max_vis = 11;
+    int scroll_top = (g_row >= max_vis) ? (g_row - max_vis + 1) : 0;
+    int end_vis = scroll_top + max_vis;
+    if (end_vis > count) end_vis = count;
+
+    float row_y = 120.0f + (g_row - scroll_top) * 42.0f;
     draw_rect(75.0f, row_y - 4.0f, screen_w - 150.0f, 38.0f, 0.16f, 0.32f, 0.60f, 0.65f);
 
     /* Bottom help box */
@@ -601,19 +618,30 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     }
 
     /* Draw Options for current tab */
-    int count = s_tab_counts[g_tab];
-    for (int i = 0; i < count; i++) {
+    for (int i = scroll_top; i < end_vis; i++) {
         MenuRow* r = &s_tab_rows[g_tab][i];
-        float ry = 124.0f + i * 42.0f;
+        float ry = 124.0f + (i - scroll_top) * 42.0f;
         if (i == g_row) {
             draw_text(100.0f, ry, 0.85f, r->name, 1.0f, 1.0f, 0.85f, 1.0f);
             char val[64];
-            snprintf(val, sizeof val, "< %s >", r->opts[r->cur]);
-            draw_text(screen_w - 450.0f, ry, 0.85f, val, 0.40f, 0.90f, 1.0f, 1.0f);
+            if (r->num_opts > 1) {
+                snprintf(val, sizeof val, "< %s >", r->opts[r->cur]);
+            } else {
+                snprintf(val, sizeof val, "[ %s ]", r->opts[r->cur]);
+            }
+            draw_text(screen_w - 480.0f, ry, 0.85f, val, 0.40f, 0.90f, 1.0f, 1.0f);
         } else {
             draw_text(100.0f, ry, 0.85f, r->name, 0.85f, 0.85f, 0.85f, 0.95f);
-            draw_text(screen_w - 435.0f, ry, 0.85f, r->opts[r->cur], 0.70f, 0.75f, 0.80f, 0.90f);
+            draw_text(screen_w - 465.0f, ry, 0.85f, r->opts[r->cur], 0.70f, 0.75f, 0.80f, 0.90f);
         }
+    }
+
+    /* Scroll indicators */
+    if (scroll_top > 0) {
+        draw_text(screen_w - 150.0f, 124.0f, 0.75f, "^ More", 0.40f, 0.85f, 1.0f, 0.90f);
+    }
+    if (end_vis < count) {
+        draw_text(screen_w - 150.0f, 124.0f + (max_vis - 1) * 42.0f, 0.75f, "v More", 0.40f, 0.85f, 1.0f, 0.90f);
     }
 
     /* Bottom help text / status message */
