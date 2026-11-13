@@ -322,9 +322,9 @@ static void pace(void) {
     int cap = options_get_fps_cap();
     if (!cap) return;
     int fg = options_get_frame_gen();
-    /* When 60 FPS target is selected with Frame Generation enabled,
-       real frames pace at 30 Hz so that 1 real + 1 generated = 60 FPS total presentation */
-    if (cap == 60 && fg > 0) {
+    /* When 40 FPS target is selected with Frame Generation enabled,
+       real frames pace at 30 Hz so that 30 real + 10 generated = 40 FPS total presentation */
+    if (cap == 40 && fg > 0) {
         cap = 30;
     }
     static uint64_t next;
@@ -587,7 +587,6 @@ static void present_(void) {
     input_poll();
 
     /* Render Options Menu overlay on real frame */
-    options_record_real_frame();
     options_menu_render(SWITCH_SCREEN_W, SWITCH_SCREEN_H);
     if (g_main_vao) glBindVertexArray(g_main_vao);
     gc_reset();
@@ -595,26 +594,14 @@ static void present_(void) {
     eglSwapBuffers(s_display, s_surface);
     g_present_us += (armTicksToNs(armGetSystemTick()) / 1000ull) - t;
 
-    /* FRAME GENERATION: Decide whether to generate an intermediate frame */
+    /* FRAME GENERATION: Generate at most 10 intermediate frames per second to boost 30 FPS to 40 FPS presentation */
     int should_gen = 0;
     if (fg > 0 && s_frame_textures_ready >= 2 && s_framegen_prog) {
-        if (fg == 1) {
-            /* 60 FPS AI Interpolation: always synthesize 1 intermediate frame */
+        static int s_fg_counter = 0;
+        s_fg_counter = (s_fg_counter + 1) % 3;
+        /* 1 intermediate frame every 3 real frames -> 10 generated + 30 real = 40 FPS presentation */
+        if (s_fg_counter == 0) {
             should_gen = 1;
-        } else if (fg == 2) {
-            /* Dynamic Adaptive Gen:
-               - If cap == 60: generate to 60 FPS
-               - If cap == 30: if real frame took longer than ~33ms (real FPS dropped to 20-28),
-                 insert an intermediate frame to boost display to a smooth 30 FPS! */
-            if (cap == 60) {
-                should_gen = 1;
-            } else if (cap == 30) {
-                if (real_delta_us > 34000ull) {
-                    should_gen = 1;
-                }
-            } else {
-                should_gen = 1;
-            }
         }
     }
 
@@ -643,7 +630,6 @@ static void present_(void) {
         glDrawArrays(GL_TRIANGLES, 0, 3);
 
         /* Overlay on generated frame */
-        options_record_gen_frame();
         options_menu_render(SWITCH_SCREEN_W, SWITCH_SCREEN_H);
         if (g_main_vao) glBindVertexArray(g_main_vao);
         gc_reset();

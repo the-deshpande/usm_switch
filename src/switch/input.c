@@ -73,14 +73,18 @@ void input_poll(void) {
     g_lstick = padGetStickPos(&pad, 0);
     g_rstick = padGetStickPos(&pad, 1);
 
-    int minus_down = (cur_buttons & HidNpadButton_Minus) != 0;
+    int minus_down = (cur_buttons & HidNpadButton_Minus) != 0 ||
+                     ((cur_buttons & (HidNpadButton_L | HidNpadButton_R | HidNpadButton_Plus)) ==
+                      (HidNpadButton_L | HidNpadButton_R | HidNpadButton_Plus));
     if (minus_down && !s_minus_was_down) {
         options_menu_toggle();
+        vlog("options_menu: Minus / L+R+Plus pressed! g_open = %d\n", options_menu_is_open());
+    } else if (options_menu_is_open()) {
+        options_menu_update(kDown, g_buttons, g_lstick.x, g_lstick.y);
     }
     s_minus_was_down = minus_down;
 
     if (options_menu_is_open()) {
-        options_menu_update(kDown, g_buttons, g_lstick.x, g_lstick.y);
         g_buttons = 0;
         g_lstick.x = g_lstick.y = 0;
         g_rstick.x = g_rstick.y = 0;

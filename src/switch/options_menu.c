@@ -56,10 +56,10 @@ static MenuRow s_controls_rows[] = {
 };
 
 static MenuRow s_perf_rows[] = {
-    {"Framerate Target", 0, 3, {"30 FPS (Native)", "60 FPS (Frame Gen)", "Uncapped"}, "Target display presentation rate"},
-    {"Frame Generation", 0, 3, {"Off", "60 FPS AI Interpolation", "Dynamic Adaptive Gen"}, "Synthesize intermediate frames between game ticks without CPU overhead"},
-    {"Display sync (VSync)", 1, 2, {"Off", "On (Double-buffered)"}, "Synchronize frame presentation to display refresh"},
-    {"FPS Counter", 0, 3, {"Hidden", "Visible (Simple)", "Visible (Detailed FG)"}, "On-screen frame rate overlay showing Real + Generated FPS"},
+    {"Frame rate cap", 1, 3, {"20 FPS", "30 FPS (Stock)", "40 FPS (Boost)"}, "Target game update rate"},
+    {"Frame Generation", 0, 2, {"Off", "On (+10 FPS Boost to 40)"}, "Synthesize 10 intermediate frames per sec to reach 40 FPS without blur"},
+    {"Display sync (VSync)", 1, 2, {"Off", "On (Double-buffered)"}, "Synchronize frame presentation"},
+    {"FPS Counter", 0, 2, {"Hidden", "Visible"}, "On-screen frame rate overlay"},
     {"GPU Performance Profile", 0, 3, {"Stock (307 MHz)", "Boost (384 MHz)", "High (460 MHz)"}, "Official Nintendo GPU clock profile"},
     {"CPU Overclock", 0, 4, {"Stock (1020 MHz)", "Boost (1224 MHz)", "High (1581 MHz)", "Max (1785 MHz)"}, "CPU clock speed (clkrst)"},
     {"Pedestrian & Traffic", 2, 5, {"None", "Very Low", "Medium (Default)", "High", "Full (PC)"}, "City traffic and pedestrians density"}
@@ -99,7 +99,10 @@ static uint32_t s_status_timer = 0;
 static const char* s_status_msg = NULL;
 
 int options_menu_is_open(void) { return g_open; }
-void options_menu_toggle(void) { g_open = !g_open; }
+void options_menu_toggle(void) {
+    g_open = !g_open;
+    vlog("options_menu: toggle called, now g_open = %d\n", g_open);
+}
 
 float options_get_density(void) {
     static const float d[] = {0.0f, 0.2f, 0.5f, 0.8f, 1.0f};
@@ -167,18 +170,17 @@ float options_get_view_distance(void) {
 }
 
 int options_get_fps_cap(void) {
-    static const int c[] = {30, 60, 0};
+    static const int c[] = {20, 30, 40};
     int idx = s_perf_rows[0].cur;
-    if (idx < 0 || idx >= 3) idx = 0;
+    if (idx < 0 || idx >= 3) idx = 1;
     return c[idx];
 }
 
 int options_get_frame_gen(void) {
-    int fg = s_perf_rows[1].cur;
-    if (fg == 0 && s_perf_rows[0].cur == 1) {
+    if (s_perf_rows[1].cur == 1 || s_perf_rows[0].cur == 2) {
         return 1;
     }
-    return fg;
+    return 0;
 }
 
 int options_get_vsync(void) {
@@ -188,7 +190,7 @@ int options_get_vsync(void) {
 
 int options_show_fps(void) {
     int idx = s_perf_rows[3].cur;
-    return (idx > 0);
+    return (idx == 1);
 }
 
 int options_get_fxaa(void) {
@@ -226,29 +228,6 @@ int options_get_swap_ab(void) {
     return (idx == 1);
 }
 
-/* Frame statistics tracking */
-static uint64_t s_last_fps_calc = 0;
-static float s_calc_total_fps = 30.0f;
-static float s_calc_real_fps = 30.0f;
-static float s_calc_gen_fps = 0.0f;
-static int s_total_frames = 0;
-static int s_real_frames = 0;
-static int s_gen_frames = 0;
-
-void options_record_real_frame(void) {
-    s_total_frames++;
-    s_real_frames++;
-}
-
-void options_record_gen_frame(void) {
-    s_total_frames++;
-    s_gen_frames++;
-}
-
-float options_get_real_fps(void) { return s_calc_real_fps; }
-float options_get_gen_fps(void) { return s_calc_gen_fps; }
-float options_get_total_fps(void) { return s_calc_total_fps; }
-
 static void reset_defaults(void) {
     s_graphics_rows[0].cur = 2; /* 120 m (Default) */
     s_graphics_rows[1].cur = 1; /* On */
@@ -263,7 +242,7 @@ static void reset_defaults(void) {
     s_controls_rows[3].cur = 1; /* On */
     s_controls_rows[4].cur = 0; /* Off (B: Jump, A: Action) */
 
-    s_perf_rows[0].cur = 0; /* 30 FPS */
+    s_perf_rows[0].cur = 1; /* 30 FPS (Stock) */
     s_perf_rows[1].cur = 0; /* Frame Gen Off */
     s_perf_rows[2].cur = 1; /* On (Double-buffered) */
     s_perf_rows[3].cur = 0; /* Hidden */
@@ -382,8 +361,10 @@ void options_menu_update(uint64_t kDown, uint64_t kHeld, int32_t lx, int32_t ly)
     (void)ly;
     if (!g_open) return;
 
-    if (kDown & HidNpadButton_B) {
+    u64 back_btn = options_get_swap_ab() ? HidNpadButton_A : HidNpadButton_B;
+    if (kDown & back_btn) {
         g_open = 0;
+        vlog("options_menu: closed by back button\n");
         return;
     }
 
@@ -565,6 +546,7 @@ static void init_gui_gl(void) {
 
 static void flush_verts(int mode) {
     if (s_vert_count == 0) return;
+    glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
     glUniform1i(s_u_mode, mode);
     glBufferSubData(GL_ARRAY_BUFFER, 0, s_vert_count * sizeof(MenuVert), s_verts);
     glDrawArrays(GL_TRIANGLES, 0, s_vert_count);
@@ -616,16 +598,16 @@ static void cleanup_gui_gl_state(void) {
 }
 
 void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
+    static uint64_t last_time = 0;
+    static float fps = 30.0f;
+    static int frames = 0;
     uint64_t now = armTicksToNs(armGetSystemTick()) / 1000ull;
-    if (now - s_last_fps_calc >= 500000ull) {
-        float dt = (float)(now - s_last_fps_calc) / 1000000.0f;
-        if (dt > 0.0f) {
-            s_calc_total_fps = (float)s_total_frames / dt;
-            s_calc_real_fps = (float)s_real_frames / dt;
-            s_calc_gen_fps = (float)s_gen_frames / dt;
-        }
-        s_total_frames = s_real_frames = s_gen_frames = 0;
-        s_last_fps_calc = now;
+    frames++;
+    if (!last_time) last_time = now;
+    if (now - last_time >= 500000ull) {
+        fps = (float)frames * 1000000.0f / (float)(now - last_time);
+        frames = 0;
+        last_time = now;
     }
 
     if (!g_open && !options_show_fps()) return;
@@ -633,6 +615,14 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
     init_gui_gl();
 
     glBindVertexArray(s_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(MenuVert), (void*)offsetof(MenuVert, x));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(MenuVert), (void*)offsetof(MenuVert, u));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(MenuVert), (void*)offsetof(MenuVert, r));
+
     glViewport(0, 0, screen_w, screen_h);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
@@ -649,19 +639,11 @@ void options_menu_render(uint32_t screen_w, uint32_t screen_h) {
 
     /* FPS Counter overlay if enabled */
     if (options_show_fps() && !g_open) {
-        char fps_str[48];
-        int show_mode = s_perf_rows[3].cur; /* 1 = simple, 2 = detailed */
-        if (options_get_frame_gen() > 0 && show_mode == 2) {
-            snprintf(fps_str, sizeof fps_str, "%.1f FPS (FG: %.0fR+%.0fG)", s_calc_total_fps, s_calc_real_fps, s_calc_gen_fps);
-            draw_rect(screen_w - 240.0f, 16.0f, 224.0f, 32.0f, 0.05f, 0.05f, 0.05f, 0.75f);
-            flush_verts(0);
-            draw_text(screen_w - 232.0f, 20.0f, 0.75f, fps_str, 0.3f, 1.0f, 0.4f, 1.0f);
-        } else {
-            snprintf(fps_str, sizeof fps_str, "%.1f FPS", s_calc_total_fps);
-            draw_rect(screen_w - 140.0f, 16.0f, 124.0f, 32.0f, 0.05f, 0.05f, 0.05f, 0.75f);
-            flush_verts(0);
-            draw_text(screen_w - 132.0f, 20.0f, 0.75f, fps_str, 0.3f, 1.0f, 0.4f, 1.0f);
-        }
+        char fps_str[32];
+        snprintf(fps_str, sizeof fps_str, "%.1f FPS", fps);
+        draw_rect(screen_w - 140.0f, 16.0f, 124.0f, 32.0f, 0.05f, 0.05f, 0.05f, 0.75f);
+        flush_verts(0);
+        draw_text(screen_w - 132.0f, 20.0f, 0.75f, fps_str, 0.3f, 1.0f, 0.4f, 1.0f);
         flush_verts(1);
         cleanup_gui_gl_state();
         return;
