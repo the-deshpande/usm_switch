@@ -28,3 +28,9 @@
 #undef HAVE_STRERROR_R
 #define HAVE_STRERROR_R 0
 #endif
+
+/* Switch build fix: neither Switch (libnx/newlib) nor this
+   toolchain provides sysconf(); the Vita-generated config_gen.h says
+   HAVE_SYSCONF 1 and config.h only overrode it for _WIN32. */
+#undef HAVE_SYSCONF
+#define HAVE_SYSCONF 0

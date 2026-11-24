@@ -140,8 +140,9 @@ static void pad_state(uint32_t out, uint32_t cb) {
 
     int rx = g_rstick.x;
     int ry = g_rstick.y;
-    if (options_get_cam_invert_x()) rx = -rx;
-    if (options_get_cam_invert_y()) ry = -ry;
+    /* No overlay camera-invert flip here: camera invert is owned by the
+       game's own Options menu (Brandon's call, §3.4 fallback), so there is
+       no overlay invert setting left to read. */
 
     /* Stick sensitivity */
     float sens = options_get_sensitivity();

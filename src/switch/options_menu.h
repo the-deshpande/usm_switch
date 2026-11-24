@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 void gl_bind_main_vao(void);
+unsigned int gl_icon_texture(void);  /* gl.c: the button-icon atlas (glyphs.h), 0 before gl init */
 
 void options_menu_init(void);
 void options_menu_cleanup(void);
@@ -23,8 +24,6 @@ int options_get_vsync(void);
 int options_show_fps(void);
 int options_get_wireframe(void);
 int options_get_swap_ab(void);
-int options_get_cam_invert_x(void);
-int options_get_cam_invert_y(void);
 float options_get_sensitivity(void);
 
 /* Graphics post-processing and frame generation */

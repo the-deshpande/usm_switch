@@ -34,7 +34,7 @@ A native Nintendo Switch port of **Ultimate Spider-Man (PC, 2005)**, built by st
   - **QoL**: Skip intro movies, Fast map pause.
   - **System**: Save settings to SD (`settings.ini` & `resolution.txt`), Restore player defaults.
   - **Debug**: Wireframe mode, Session logging (`log.txt`), Available Horizon RAM monitor.
-- **Native Joy-Con & Pro Controller Mapping**: Standard Xbox controller button layout with dedicated buttons for Jump, Web Zip, Web Swing, Attacks, Pause, and Map on Left Stick Click.
+- **Native Joy-Con & Pro Controller Mapping**: Native Switch button layout with dedicated buttons for Jump, Web Zip, Web Swing, Attacks, Pause, and Map on Left Stick Click.
 - **Clean In-Game Exit**: Selecting "Quit" from the in-game main menu cleanly restores hardware clocks and exits the application back to Horizon OS / Home menu without freezing.
 - **Full Video & Audio**: Integrated Bink video cutscenes (via FFmpeg) and full 3D positional DirectSound streaming.
 
@@ -56,6 +56,7 @@ A native Nintendo Switch port of **Ultimate Spider-Man (PC, 2005)**, built by st
   pip install capstone
   ```
 - `cmake`, `ninja`, and `git`.
+- **switch-glad** (`sudo dkp-pacman -S switch-glad`): the port links against glad for its OpenGL loader; without it the build fails on a missing `glad/glad.h`. If you install glad into a local prefix instead of the standard portlibs location, pass its include/lib paths to CMake (e.g. `-DCMAKE_C_FLAGS="-I<glad-prefix>/include"` and add `<glad-prefix>/lib` to `CMAKE_EXE_LINKER_FLAGS`).
 
 ---
 
@@ -65,7 +66,7 @@ Follow these exact steps to compile your own working Nintendo Switch NRO from sc
 
 ### Step 1: Clone the Repository
 ```bash
-git clone https://github.com/your-repo/usm_switch.git
+git clone https://github.com/the-deshpande/usm_switch.git
 cd usm_switch
 ```
 
@@ -172,22 +173,22 @@ You can install and run the port in either of two ways:
 
 ## Controls
 
-The port utilizes standard modern Xbox controller layout:
+The port uses the native Switch button layout. Tutorial prompts and the in-game Controls table show Switch buttons (B/A/Y/X/L/R icons, Plus and stick clicks as words); the overlay's Controller Map follows the Swap A/B setting for Jump and Wall Crawl.
 
-| Switch Button | Xbox Equivalent | In-Game Action |
-|---|---|---|
-| **B** (or **A** if swapped) | **A** | **Jump** / Release Web Swing / Confirm |
-| **A** (or **B** if swapped) | **B** | **Wall Crawl** / Web Action / Sprint / Cancel |
-| **Y** | **X** | **Punch** / Light Combo Attack |
-| **X** | **Y** | **Kick** / Heavy Combo Attack |
-| **L / ZL** | **LB / LT** | **Web Zip** |
-| **R / ZR** | **RB / RT** | **Web Swing** / Shoot Web |
-| **Left Stick** | Left Stick | Move Spider-Man / Navigate Menus |
-| **Right Stick** | Right Stick | Rotate Camera |
-| **Left Stick Click (LS)** | Back | **Open City Map** |
-| **Right Stick Click (RS)** | RS Click | **Center Camera Behind Player** |
-| **Plus (`+`)** | Start | **Pause Game** / In-game Menu |
-| **Minus (`-`)** or **L+R+Plus** | — | **SwitchWaker Overlay Menu** (Settings & Performance) |
+| Switch Button | In-Game Action |
+|---|---|
+| **B** (or **A** if swapped) | **Jump** / Release Web Swing / Confirm |
+| **A** (or **B** if swapped) | **Wall Crawl** / Web Action / Sprint / Cancel |
+| **Y** | **Punch** / Light Combo Attack |
+| **X** | **Kick** / Heavy Combo Attack |
+| **L / ZL** | **Web Zip** |
+| **R / ZR** | **Web Swing** / Shoot Web |
+| **Left Stick** | Move Spider-Man / Navigate Menus |
+| **Right Stick** | Rotate Camera |
+| **Left Stick Click (LS)** | **Open City Map** |
+| **Right Stick Click (RS)** | **Center Camera Behind Player** |
+| **Plus (`+`)** | **Pause Game** / In-game Menu |
+| **Minus (`-`)** or **L+R+Plus** | **SwitchWaker Overlay Menu** (Settings & Performance) |
 
 ---
 
@@ -205,4 +206,5 @@ The port utilizes standard modern Xbox controller layout:
 - **SwitchWaker**: Sincere gratitude to the **SwitchWaker** (*The Legend of Zelda: The Wind Waker* Switch decompilation) project and team. Their in-game overlay architecture, options menu design, clkrst / apm hardware clock tuning implementations, and performance profiling methodology directly inspired and formed the foundation for this port's in-game overlay and hardware controls.
 - **Treyarch, Activision & Marvel** for *Ultimate Spider-Man* (2005).
 - **Rinnegatamante** for vitaGL and initial recompilation research.
+- **Kenney**: Switch button icons in tutorial prompts use Kenney's Input Prompts 1.5A (CC0, kenney.nl), vendored with its licence in `tools/button-art/`.
 - **Google DeepMind Antigravity AI**: Developed and engineered the Nintendo Switch port, including crash diagnostics, OpenGL shader pipeline, Horizon memory virtualization, input mapping, and SwitchWaker-inspired UI and overclocking implementations.

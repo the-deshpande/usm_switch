@@ -66,6 +66,9 @@ static uint32_t bb_w, bb_h;  /* the backbuffer's, letterboxed on the screen */
 static float bb_scale, bb_ox, bb_oy;
 static GLuint g_fb;
 static GLuint g_white, g_black, g_glyphs;  /* g_glyphs: the button icons (glyphs.h) */
+/* The overlay draws the same button icons (options_menu.c): it shares this
+   texture rather than uploading glyphs.h a second time. 0 until gl init. */
+unsigned int gl_icon_texture(void) { return g_glyphs; }
 static uint32_t g_arrays;  /* attribute arrays enabled */
 static int g_gc_off;  /* the state cache (below) */
 static void gc_reset(void);
